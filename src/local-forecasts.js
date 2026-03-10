@@ -1,5 +1,4 @@
-// Scrape local weather forecasts from WGEM and KHQA for comparison
-// Falls back gracefully if stations can't be reached
+import { fetchWithTimeout } from './fetch-utils.js';
 
 const STATIONS = [
   {
@@ -23,37 +22,51 @@ const STATIONS = [
     name: 'NWS',
     callsign: 'National Weather Service',
     city: 'Lincoln, IL (ILX)',
-    // NWS API is free and reliable
-    apiUrl: 'https://api.weather.gov/gridpoints/ILX/18,69/forecast',
     color: '#2a9d8f'
   }
 ];
 
-// Fetch NWS forecast — this is the most reliable source
-async function fetchNWSForecast(lat, lon) {
+const NWS_HEADERS = Object.freeze({
+  'User-Agent': `SwarmCast/${process.env.npm_package_version || '0.3.0'} (weather-prediction-app)`
+});
+
+async function fetchNWSForecast(lat, lon, options = {}) {
   try {
-    // Step 1: Get the grid point
-    const pointRes = await fetch(`https://api.weather.gov/points/${lat},${lon}`, {
-      headers: { 'User-Agent': 'SwarmCast/0.1 (weather-prediction-app)' }
+    const pointRes = await fetchWithTimeout(`https://api.weather.gov/points/${lat},${lon}`, {
+      ...options,
+      headers: {
+        ...NWS_HEADERS,
+        ...(options.headers || {})
+      }
     });
-    if (!pointRes.ok) throw new Error(`NWS points: ${pointRes.status}`);
+    if (!pointRes.ok) {
+      throw new Error(`NWS points: ${pointRes.status}`);
+    }
+
     const pointData = await pointRes.json();
+    const forecastUrl = pointData.properties?.forecast;
+    if (!forecastUrl) {
+      return null;
+    }
 
-    // Step 2: Get the forecast
-    const forecastUrl = pointData.properties.forecast;
-    const fcRes = await fetch(forecastUrl, {
-      headers: { 'User-Agent': 'SwarmCast/0.1 (weather-prediction-app)' }
+    const forecastRes = await fetchWithTimeout(forecastUrl, {
+      ...options,
+      headers: {
+        ...NWS_HEADERS,
+        ...(options.headers || {})
+      }
     });
-    if (!fcRes.ok) throw new Error(`NWS forecast: ${fcRes.status}`);
-    const fcData = await fcRes.json();
+    if (!forecastRes.ok) {
+      throw new Error(`NWS forecast: ${forecastRes.status}`);
+    }
 
-    const periods = fcData.properties.periods;
-
-    // Find tomorrow's day and night periods
-    const tomorrowDay = periods.find(p => p.isDaytime && !isToday(p.startTime));
-    const tomorrowNight = periods.find(p => !p.isDaytime && !isToday(p.startTime));
-
-    if (!tomorrowDay) return null;
+    const forecastData = await forecastRes.json();
+    const periods = forecastData.properties?.periods || [];
+    const tomorrowDay = periods.find((period) => period.isDaytime && !isToday(period.startTime));
+    const tomorrowNight = periods.find((period) => !period.isDaytime && !isToday(period.startTime));
+    if (!tomorrowDay) {
+      return null;
+    }
 
     return {
       source: 'nws',
@@ -61,51 +74,43 @@ async function fetchNWSForecast(lat, lon) {
       color: '#2a9d8f',
       forecast: {
         high: tomorrowDay.temperature,
-        low: tomorrowNight?.temperature || null,
+        low: tomorrowNight?.temperature ?? null,
         condition: tomorrowDay.shortForecast,
         detail: tomorrowDay.detailedForecast,
         wind: tomorrowDay.windSpeed,
         windDir: tomorrowDay.windDirection,
         precipProb: tomorrowDay.probabilityOfPrecipitation?.value || 0
       },
-      // Include the full 7-day for comparison
-      extended: periods.slice(0, 14).map(p => ({
-        name: p.name,
-        temp: p.temperature,
-        unit: p.temperatureUnit,
-        isDaytime: p.isDaytime,
-        condition: p.shortForecast,
-        wind: p.windSpeed,
-        detail: p.detailedForecast,
-        precipProb: p.probabilityOfPrecipitation?.value || 0
+      extended: periods.slice(0, 14).map((period) => ({
+        name: period.name,
+        temp: period.temperature,
+        unit: period.temperatureUnit,
+        isDaytime: period.isDaytime,
+        condition: period.shortForecast,
+        wind: period.windSpeed,
+        detail: period.detailedForecast,
+        precipProb: period.probabilityOfPrecipitation?.value || 0
       }))
     };
-  } catch (err) {
-    console.error('NWS fetch error:', err.message);
+  } catch {
     return null;
   }
 }
 
 function isToday(dateStr) {
-  const d = new Date(dateStr);
+  const candidate = new Date(dateStr);
   const today = new Date();
-  return d.toDateString() === today.toDateString();
+  return candidate.toDateString() === today.toDateString();
 }
 
-export async function getLocalForecasts(lat, lon) {
-  console.log('📡 Fetching local forecasts...');
-
+export async function getLocalForecasts(lat, lon, options = {}) {
   const results = [];
-
-  // NWS is the reliable one
-  const nws = await fetchNWSForecast(lat, lon);
+  const nws = await fetchNWSForecast(lat, lon, options);
   if (nws) {
     results.push(nws);
-    console.log(`  ✅ NWS: High ${nws.forecast.high}°F, ${nws.forecast.condition}`);
   }
 
-  // Add station metadata even if we can't scrape them (for display)
-  for (const station of STATIONS.filter(s => s.id !== 'nws')) {
+  for (const station of STATIONS.filter((station) => station.id !== 'nws')) {
     results.push({
       source: station.id,
       name: station.name,
@@ -113,7 +118,7 @@ export async function getLocalForecasts(lat, lon) {
       city: station.city,
       url: station.url,
       forecast: null,
-      note: 'Web scraping not implemented — visit station website'
+      note: 'Web scraping not implemented; visit the station website.'
     });
   }
 

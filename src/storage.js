@@ -1,83 +1,82 @@
-// Persistent forecast storage — JSON files organized by date
+import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'fs';
+import { dirname, join } from 'path';
+import { config } from './config.js';
 
-import { readFileSync, writeFileSync, mkdirSync, readdirSync, existsSync } from 'fs';
-import { join, dirname } from 'path';
-import { fileURLToPath } from 'url';
+const DATA_DIR = config.dataDir;
+const FORECAST_DIR = join(DATA_DIR, 'forecasts');
+const OUTCOME_DIR = join(DATA_DIR, 'outcomes');
+const SCHEDULE_FILE = join(DATA_DIR, 'schedule.json');
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
-const DATA_DIR = join(__dirname, '..', 'data', 'forecasts');
+export const DEFAULT_SCHEDULE_CONFIG = Object.freeze({
+  enabled: false,
+  intervalHours: 6,
+  locations: ['mt-sterling']
+});
 
-function ensureDir(dir) {
-  if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+export function ensureDir(dir) {
+  if (!existsSync(dir)) {
+    mkdirSync(dir, { recursive: true });
+  }
+}
+
+export function writeJsonAtomic(filepath, value) {
+  ensureDir(dirname(filepath));
+  const tempPath = `${filepath}.${process.pid}.${Date.now()}.tmp`;
+  try {
+    writeFileSync(tempPath, `${JSON.stringify(value, null, 2)}\n`, 'utf-8');
+    renameSync(tempPath, filepath);
+  } catch (error) {
+    rmSync(tempPath, { force: true });
+    throw error;
+  }
 }
 
 export function saveForecast(forecast) {
-  ensureDir(DATA_DIR);
+  ensureDir(FORECAST_DIR);
   const ts = new Date(forecast.timestamp).toISOString().replace(/[:.]/g, '-');
   const filename = `${forecast.targetDate}_${ts}.json`;
-  const filepath = join(DATA_DIR, filename);
-  writeFileSync(filepath, JSON.stringify(forecast, null, 2));
-  console.log(`💾 Saved forecast to ${filename}`);
+  const filepath = join(FORECAST_DIR, filename);
+  writeJsonAtomic(filepath, forecast);
   return filename;
 }
 
 export function loadForecasts(limit = 50) {
-  ensureDir(DATA_DIR);
-  const files = readdirSync(DATA_DIR)
-    .filter(f => f.endsWith('.json'))
+  ensureDir(FORECAST_DIR);
+  return readdirSync(FORECAST_DIR)
+    .filter((file) => file.endsWith('.json'))
     .sort()
     .reverse()
-    .slice(0, limit);
-
-  return files.map(f => {
-    try {
-      return JSON.parse(readFileSync(join(DATA_DIR, f), 'utf-8'));
-    } catch {
-      return null;
-    }
-  }).filter(Boolean);
+    .slice(0, limit)
+    .map((file) => readJsonFile(join(FORECAST_DIR, file)))
+    .filter(Boolean);
 }
 
 export function loadForecastsForDate(targetDate) {
-  ensureDir(DATA_DIR);
-  const files = readdirSync(DATA_DIR)
-    .filter(f => f.startsWith(targetDate) && f.endsWith('.json'))
+  ensureDir(FORECAST_DIR);
+  return readdirSync(FORECAST_DIR)
+    .filter((file) => file.startsWith(`${targetDate}_`) && file.endsWith('.json'))
     .sort()
-    .reverse();
-
-  return files.map(f => {
-    try {
-      return JSON.parse(readFileSync(join(DATA_DIR, f), 'utf-8'));
-    } catch {
-      return null;
-    }
-  }).filter(Boolean);
+    .reverse()
+    .map((file) => readJsonFile(join(FORECAST_DIR, file)))
+    .filter(Boolean);
 }
 
-// Save outcome data (actual weather) for calibration tracking
 export function saveOutcome(date, actual) {
-  const outDir = join(__dirname, '..', 'data', 'outcomes');
-  ensureDir(outDir);
-  const filepath = join(outDir, `${date}.json`);
-  writeFileSync(filepath, JSON.stringify({ date, actual, recorded: new Date().toISOString() }, null, 2));
-  console.log(`📊 Saved outcome for ${date}`);
+  ensureDir(OUTCOME_DIR);
+  const filepath = join(OUTCOME_DIR, `${date}.json`);
+  writeJsonAtomic(filepath, {
+    date,
+    actual,
+    recorded: new Date().toISOString()
+  });
 }
 
 export function loadOutcome(date) {
-  const filepath = join(__dirname, '..', 'data', 'outcomes', `${date}.json`);
-  try {
-    return JSON.parse(readFileSync(filepath, 'utf-8'));
-  } catch {
-    return null;
-  }
+  return readJsonFile(join(OUTCOME_DIR, `${date}.json`));
 }
 
-// Calculate calibration stats: how close were predictions to outcomes?
 export function getCalibrationStats() {
   const forecasts = loadForecasts(200);
-  const outDir = join(__dirname, '..', 'data', 'outcomes');
-  ensureDir(outDir);
-
   const stats = {
     totalForecasts: forecasts.length,
     withOutcomes: 0,
@@ -89,44 +88,98 @@ export function getCalibrationStats() {
 
   for (const forecast of forecasts) {
     const outcome = loadOutcome(forecast.targetDate);
-    if (!outcome) continue;
-
-    stats.withOutcomes++;
-    const actual = outcome.actual;
-
-    // Consensus accuracy
-    if (forecast.consensus?.consensus) {
-      const c = forecast.consensus.consensus;
-      if (actual.high_temp != null) {
-        stats.tempErrors.push(Math.abs(c.high_temp - actual.high_temp));
-      }
+    if (!outcome) {
+      continue;
     }
 
-    // Per-agent accuracy
-    for (const agent of (forecast.agents || [])) {
-      if (!agent.result) continue;
-      if (!stats.agentAccuracy[agent.id]) {
-        stats.agentAccuracy[agent.id] = { name: agent.name, emoji: agent.emoji, tempErrors: [], count: 0 };
+    stats.withOutcomes += 1;
+    const actual = outcome.actual;
+
+    if (forecast.consensus?.consensus && actual.high_temp != null) {
+      stats.tempErrors.push(Math.abs(forecast.consensus.consensus.high_temp - actual.high_temp));
+    }
+
+    for (const agent of forecast.agents || []) {
+      if (!agent.result) {
+        continue;
       }
-      const aa = stats.agentAccuracy[agent.id];
-      aa.count++;
+      if (!stats.agentAccuracy[agent.id]) {
+        stats.agentAccuracy[agent.id] = {
+          name: agent.name,
+          emoji: agent.emoji,
+          tempErrors: [],
+          count: 0
+        };
+      }
+
+      const agentStats = stats.agentAccuracy[agent.id];
+      agentStats.count += 1;
       if (actual.high_temp != null) {
-        aa.tempErrors.push(Math.abs(agent.result.prediction.high_temp - actual.high_temp));
+        agentStats.tempErrors.push(Math.abs(agent.result.prediction.high_temp - actual.high_temp));
       }
     }
   }
 
-  // Average errors
-  stats.avgTempError = stats.tempErrors.length
-    ? (stats.tempErrors.reduce((a, b) => a + b, 0) / stats.tempErrors.length).toFixed(1)
+  stats.avgTempError = stats.tempErrors.length > 0
+    ? (stats.tempErrors.reduce((sum, value) => sum + value, 0) / stats.tempErrors.length).toFixed(1)
     : null;
 
-  for (const id of Object.keys(stats.agentAccuracy)) {
-    const aa = stats.agentAccuracy[id];
-    aa.avgTempError = aa.tempErrors.length
-      ? (aa.tempErrors.reduce((a, b) => a + b, 0) / aa.tempErrors.length).toFixed(1)
+  for (const entry of Object.values(stats.agentAccuracy)) {
+    entry.avgTempError = entry.tempErrors.length > 0
+      ? (entry.tempErrors.reduce((sum, value) => sum + value, 0) / entry.tempErrors.length).toFixed(1)
       : null;
   }
 
   return stats;
+}
+
+export function loadScheduleConfig() {
+  return normalizeScheduleConfig(readJsonFile(SCHEDULE_FILE) || DEFAULT_SCHEDULE_CONFIG);
+}
+
+export function saveScheduleConfig(scheduleConfig) {
+  const normalized = normalizeScheduleConfig(scheduleConfig);
+  writeJsonAtomic(SCHEDULE_FILE, normalized);
+  return normalized;
+}
+
+export function getStorageStatus() {
+  try {
+    ensureDir(DATA_DIR);
+    ensureDir(FORECAST_DIR);
+    ensureDir(OUTCOME_DIR);
+    return {
+      ok: true,
+      dataDir: DATA_DIR
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      dataDir: DATA_DIR,
+      error: error instanceof Error ? error.message : String(error)
+    };
+  }
+}
+
+function normalizeScheduleConfig(scheduleConfig = DEFAULT_SCHEDULE_CONFIG) {
+  const intervalHours = Number.isFinite(Number(scheduleConfig.intervalHours))
+    ? Number(scheduleConfig.intervalHours)
+    : DEFAULT_SCHEDULE_CONFIG.intervalHours;
+  const locations = Array.isArray(scheduleConfig.locations)
+    ? [...new Set(scheduleConfig.locations.map((value) => String(value).trim()).filter(Boolean))]
+    : DEFAULT_SCHEDULE_CONFIG.locations;
+
+  return {
+    enabled: Boolean(scheduleConfig.enabled),
+    intervalHours: Math.max(1, Math.min(24, Math.round(intervalHours))),
+    locations: locations.length > 0 ? locations : [...DEFAULT_SCHEDULE_CONFIG.locations]
+  };
+}
+
+function readJsonFile(filepath) {
+  try {
+    return JSON.parse(readFileSync(filepath, 'utf-8'));
+  } catch {
+    return null;
+  }
 }

@@ -2,10 +2,10 @@
 // This is what makes SwarmCast genuinely useful over time
 
 import { loadForecasts } from './storage.js';
-import { getCurrentAndForecast, summarizeWeatherData } from './weather.js';
+import { fetchWithTimeout } from './fetch-utils.js';
 
 // Get actual weather for past dates from Open-Meteo archive
-export async function getActualWeather(lat, lon, date) {
+export async function getActualWeather(lat, lon, date, options = {}) {
   const params = new URLSearchParams({
     latitude: lat,
     longitude: lon,
@@ -22,7 +22,7 @@ export async function getActualWeather(lat, lon, date) {
     timezone: 'America/Chicago'
   });
 
-  const res = await fetch(`https://api.open-meteo.com/v1/forecast?${params}`);
+  const res = await fetchWithTimeout(`https://api.open-meteo.com/v1/forecast?${params}`, options);
   if (!res.ok) return null;
   const data = await res.json();
 

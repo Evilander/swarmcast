@@ -1,123 +1,155 @@
-// Server-Sent Events streaming for live agent analysis
-
 import { AGENTS, buildAgentPrompt, buildConsensusPrompt } from './agents.js';
 import { buildDebatePrompt } from './debate.js';
 import { callLLM } from './llm.js';
+import { validateAgentResult, validateConsensusResult } from './llm-schemas.js';
+import { config } from './config.js';
 import { getLocalForecasts } from './local-forecasts.js';
-import { getSevereParams } from './weather.js';
 import { getAgentWeights } from './reputation.js';
+import { getSevereParams } from './weather.js';
 
 export function setupSSE(app, getWeatherSummary) {
   app.get('/api/forecast/stream', async (req, res) => {
-    const { lat, lon, location, date, debate } = {
-      lat: req.query.lat || process.env.LATITUDE || '41.8781',
-      lon: req.query.lon || process.env.LONGITUDE || '-87.6298',
-      location: req.query.location || process.env.LOCATION_NAME || 'Chicago, IL',
-      date: req.query.date || getTomorrowDate(),
-      debate: req.query.debate === 'true'
-    };
+    const latitude = sanitizeNumber(req.query.lat, process.env.LATITUDE || '41.8781', -90, 90);
+    const longitude = sanitizeNumber(req.query.lon, process.env.LONGITUDE || '-87.6298', -180, 180);
+    const location = sanitizeLocation(req.query.location || process.env.LOCATION_NAME || 'Chicago, IL');
+    const date = sanitizeDate(req.query.date || getTomorrowDate());
+    const debate = req.query.debate === 'true';
 
-    // Set SSE headers
-    res.writeHead(200, {
-      'Content-Type': 'text/event-stream',
-      'Cache-Control': 'no-cache',
-      'Connection': 'keep-alive',
-      'Access-Control-Allow-Origin': '*'
+    const controller = new AbortController();
+    let closed = false;
+    req.on('close', () => {
+      closed = true;
+      controller.abort(new Error('Client disconnected.'));
     });
 
-    function send(event, data) {
-      res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+    res.writeHead(200, {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache, no-transform',
+      Connection: 'keep-alive'
+    });
+    if (typeof res.flushHeaders === 'function') {
+      res.flushHeaders();
     }
+
+    const heartbeat = setInterval(() => {
+      if (!closed) {
+        res.write(': keep-alive\n\n');
+      }
+    }, config.streaming.heartbeatMs);
+
+    const send = (event, data) => {
+      if (!closed && !res.writableEnded) {
+        res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+      }
+    };
 
     try {
       send('status', { phase: 'weather', message: 'Fetching weather data...' });
-      const [summary, nwsForecasts, severeParams] = await Promise.all([
-        getWeatherSummary(lat, lon),
-        getLocalForecasts(lat, lon).catch(() => []),
-        getSevereParams(lat, lon).catch(() => null)
+      const [summary, localForecasts, severeParams] = await Promise.all([
+        getWeatherSummary(latitude, longitude, { signal: controller.signal }),
+        getLocalForecasts(latitude, longitude, { signal: controller.signal }).catch(() => []),
+        getSevereParams(latitude, longitude, { signal: controller.signal }).catch(() => null)
       ]);
-      send('weather', summary);
-
-      const nwsForecast = nwsForecasts.find(f => f.source === 'nws') || null;
-      const severeData = severeParams?.find(d => d.date === date) || null;
-
-      if (severeData && severeData.severity?.level !== 'none') {
-        send('status', { phase: 'severe', message: 'Severe weather detected: CAPE ' + severeData.maxCape + ' J/kg (' + severeData.severity.label + ')' });
+      if (closed) {
+        return;
       }
 
-      // Launch agents one-by-one with streaming status updates
+      send('weather', summary);
+      const nwsForecast = localForecasts.find((forecast) => forecast.source === 'nws') || null;
+      const severeData = severeParams?.find((day) => day.date === date) || null;
+
+      if (severeData && severeData.severity?.level !== 'none') {
+        send('status', {
+          phase: 'severe',
+          message: `Severe weather detected: CAPE ${severeData.maxCape} J/kg (${severeData.severity.label})`
+        });
+      }
+
       send('status', { phase: 'agents', message: 'Dispatching agents...' });
       const agentResults = [];
 
-      // Run in parallel but report as they finish
-      const promises = AGENTS.map(async (agent) => {
+      await Promise.all(AGENTS.map(async (agent) => {
         send('agent_start', { id: agent.id, name: agent.name, emoji: agent.emoji, color: agent.color });
-        const start = Date.now();
-
+        const startedAt = Date.now();
         try {
           const prompt = buildAgentPrompt(agent, summary, location, date, nwsForecast, severeData);
-          const result = await callLLM(prompt);
-          const elapsed = ((Date.now() - start) / 1000).toFixed(1);
-
-          const agentResult = {
+          const result = validateAgentResult(await callLLM(prompt, { signal: controller.signal }));
+          const payload = {
             id: agent.id,
             name: agent.name,
             emoji: agent.emoji,
             color: agent.color,
             result,
-            elapsed: parseFloat(elapsed),
+            elapsed: Number(((Date.now() - startedAt) / 1000).toFixed(1)),
             error: null
           };
-
-          agentResults.push(agentResult);
-          send('agent_done', agentResult);
-          return agentResult;
-        } catch (err) {
-          const agentResult = {
+          agentResults.push(payload);
+          send('agent_done', payload);
+          return payload;
+        } catch (error) {
+          const payload = {
             id: agent.id,
             name: agent.name,
             emoji: agent.emoji,
             color: agent.color,
             result: null,
-            elapsed: ((Date.now() - start) / 1000),
-            error: err.message
+            elapsed: Number(((Date.now() - startedAt) / 1000).toFixed(1)),
+            error: error instanceof Error ? error.message : String(error)
           };
-          agentResults.push(agentResult);
-          send('agent_error', agentResult);
-          return agentResult;
+          agentResults.push(payload);
+          if (!controller.signal.aborted) {
+            send('agent_error', payload);
+          }
+          return payload;
         }
-      });
+      }));
 
-      await Promise.all(promises);
+      if (closed) {
+        return;
+      }
 
-      // Build consensus
-      const successful = agentResults.filter(r => r.result);
+      const successful = agentResults.filter((result) => result.result);
       if (successful.length > 0) {
         send('status', { phase: 'consensus', message: 'Building consensus...' });
-        const agentWeights = getAgentWeights();
-        const consensusPrompt = buildConsensusPrompt(successful, location, date, agentWeights);
-        const consensus = await callLLM(consensusPrompt);
+        const consensus = validateConsensusResult(await callLLM(
+          buildConsensusPrompt(successful, location, date, getAgentWeights()),
+          { signal: controller.signal }
+        ));
         send('consensus', consensus);
 
-        // Run debate if requested
         if (debate && successful.length > 1) {
           send('status', { phase: 'debate', message: 'Agents debating...' });
-
-          const debatePromises = successful.map(async (agentResult) => {
-            const agent = AGENTS.find(a => a.id === agentResult.id);
-            if (!agent) return null;
-            try {
-              const prompt = buildDebatePrompt(agent, agentResults, consensus, location, date);
-              const result = await callLLM(prompt);
-              const resp = { id: agent.id, name: agent.name, emoji: agent.emoji, color: agent.color, debate: result };
-              send('debate_response', resp);
-              return resp;
-            } catch (err) {
-              return { id: agent.id, name: agent.name, emoji: agent.emoji, color: agent.color, debate: null, error: err.message };
+          await Promise.all(successful.map(async (result) => {
+            const agent = AGENTS.find((entry) => entry.id === result.id);
+            if (!agent) {
+              return null;
             }
-          });
 
-          await Promise.all(debatePromises);
+            try {
+              const debateResult = await callLLM(
+                buildDebatePrompt(agent, agentResults, consensus, location, date),
+                { signal: controller.signal }
+              );
+              const payload = {
+                id: agent.id,
+                name: agent.name,
+                emoji: agent.emoji,
+                color: agent.color,
+                debate: debateResult
+              };
+              send('debate_response', payload);
+              return payload;
+            } catch (error) {
+              return {
+                id: agent.id,
+                name: agent.name,
+                emoji: agent.emoji,
+                color: agent.color,
+                debate: null,
+                error: error instanceof Error ? error.message : String(error)
+              };
+            }
+          }));
         }
       }
 
@@ -126,17 +158,45 @@ export function setupSSE(app, getWeatherSummary) {
         agentsSucceeded: successful.length,
         agentsFailed: agentResults.length - successful.length
       });
-
-    } catch (err) {
-      send('error', { message: err.message });
+    } catch (error) {
+      if (!controller.signal.aborted) {
+        send('error', {
+          message: error instanceof Error ? error.message : String(error)
+        });
+      }
+    } finally {
+      clearInterval(heartbeat);
+      if (!res.writableEnded) {
+        res.end();
+      }
     }
-
-    res.end();
   });
 }
 
 function getTomorrowDate() {
-  const d = new Date();
-  d.setDate(d.getDate() + 1);
-  return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+  const date = new Date();
+  date.setDate(date.getDate() + 1);
+  return [
+    date.getFullYear(),
+    String(date.getMonth() + 1).padStart(2, '0'),
+    String(date.getDate()).padStart(2, '0')
+  ].join('-');
+}
+
+function sanitizeNumber(value, fallback, min, max) {
+  const parsed = Number(value ?? fallback);
+  if (!Number.isFinite(parsed) || parsed < min || parsed > max) {
+    return Number(fallback);
+  }
+  return parsed;
+}
+
+function sanitizeLocation(value) {
+  const location = String(value || '').trim();
+  return location ? location.slice(0, 100) : 'Chicago, IL';
+}
+
+function sanitizeDate(value) {
+  const date = String(value || '').trim();
+  return /^\d{4}-\d{2}-\d{2}$/u.test(date) ? date : getTomorrowDate();
 }

@@ -1,18 +1,15 @@
-// LLM provider abstraction — supports OpenAI, Anthropic, and Gemini
+import { config, getProviderApiKey } from './config.js';
+import { fetchWithTimeout } from './fetch-utils.js';
 
-function getConfig() {
-  const provider = process.env.LLM_PROVIDER || 'openai';
-  return {
-    provider,
-    openaiKey: process.env.OPENAI_API_KEY,
-    anthropicKey: process.env.ANTHROPIC_API_KEY,
-    geminiKey: process.env.GEMINI_API_KEY
-  };
+function resolveProvider(options = {}) {
+  return options.provider || config.llm.provider;
 }
 
 async function callOpenAI(prompt, options = {}) {
-  const key = process.env.OPENAI_API_KEY;
-  if (!key) throw new Error('OPENAI_API_KEY not set');
+  const key = getProviderApiKey('openai');
+  if (!key) {
+    throw new Error('OPENAI_API_KEY is not set.');
+  }
 
   const body = {
     model: options.model || 'gpt-4o-mini',
@@ -20,31 +17,39 @@ async function callOpenAI(prompt, options = {}) {
     temperature: options.temperature ?? 0.7,
     max_tokens: options.maxTokens || 2000
   };
-  if (!options.raw) body.response_format = { type: 'json_object' };
+  if (!options.raw) {
+    body.response_format = { type: 'json_object' };
+  }
 
-  const res = await fetch('https://api.openai.com/v1/chat/completions', {
+  const response = await fetchWithTimeout('https://api.openai.com/v1/chat/completions', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      'Authorization': `Bearer ${key}`
+      Authorization: `Bearer ${key}`
     },
-    body: JSON.stringify(body)
+    body: JSON.stringify(body),
+    signal: options.signal
   });
 
-  if (!res.ok) {
-    const err = await res.text();
-    throw new Error(`OpenAI error ${res.status}: ${err}`);
+  if (!response.ok) {
+    throw new Error(`OpenAI error ${response.status}: ${await response.text()}`);
   }
 
-  const data = await res.json();
-  return data.choices[0].message.content;
+  const data = await response.json();
+  const content = data.choices?.[0]?.message?.content;
+  if (typeof content !== 'string') {
+    throw new Error('OpenAI response did not include message content.');
+  }
+  return content;
 }
 
 async function callAnthropic(prompt, options = {}) {
-  const key = process.env.ANTHROPIC_API_KEY;
-  if (!key) throw new Error('ANTHROPIC_API_KEY not set');
+  const key = getProviderApiKey('anthropic');
+  if (!key) {
+    throw new Error('ANTHROPIC_API_KEY is not set.');
+  }
 
-  const res = await fetch('https://api.anthropic.com/v1/messages', {
+  const response = await fetchWithTimeout('https://api.anthropic.com/v1/messages', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -54,53 +59,69 @@ async function callAnthropic(prompt, options = {}) {
     body: JSON.stringify({
       model: options.model || 'claude-sonnet-4-6',
       max_tokens: options.maxTokens || 1000,
-      messages: [{ role: 'user', content: prompt + (options.raw ? '' : '\n\nRespond with ONLY valid JSON, no markdown.') }],
+      messages: [{
+        role: 'user',
+        content: prompt + (options.raw ? '' : '\n\nRespond with ONLY valid JSON, no markdown.')
+      }],
       temperature: options.temperature ?? 0.7
-    })
+    }),
+    signal: options.signal
   });
 
-  if (!res.ok) {
-    const err = await res.text();
-    throw new Error(`Anthropic error ${res.status}: ${err}`);
+  if (!response.ok) {
+    throw new Error(`Anthropic error ${response.status}: ${await response.text()}`);
   }
 
-  const data = await res.json();
-  return data.content[0].text;
+  const data = await response.json();
+  const content = data.content?.[0]?.text;
+  if (typeof content !== 'string') {
+    throw new Error('Anthropic response did not include text content.');
+  }
+  return content;
 }
 
 async function callGemini(prompt, options = {}) {
-  const key = process.env.GEMINI_API_KEY;
-  if (!key) throw new Error('GEMINI_API_KEY not set');
+  const key = getProviderApiKey('gemini');
+  if (!key) {
+    throw new Error('GEMINI_API_KEY is not set.');
+  }
 
   const model = options.model || 'gemini-2.0-flash';
-  const res = await fetch(
+  const response = await fetchWithTimeout(
     `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`,
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        contents: [{ parts: [{ text: prompt + (options.raw ? '' : '\n\nRespond with ONLY valid JSON, no markdown.') }] }],
+        contents: [{
+          parts: [{
+            text: prompt + (options.raw ? '' : '\n\nRespond with ONLY valid JSON, no markdown.')
+          }]
+        }],
         generationConfig: {
           temperature: options.temperature ?? 0.7,
           maxOutputTokens: options.maxTokens || 2000,
           ...(options.raw ? {} : { responseMimeType: 'application/json' })
         }
-      })
+      }),
+      signal: options.signal
     }
   );
 
-  if (!res.ok) {
-    const err = await res.text();
-    throw new Error(`Gemini error ${res.status}: ${err}`);
+  if (!response.ok) {
+    throw new Error(`Gemini error ${response.status}: ${await response.text()}`);
   }
 
-  const data = await res.json();
-  return data.candidates[0].content.parts[0].text;
+  const data = await response.json();
+  const content = data.candidates?.[0]?.content?.parts?.[0]?.text;
+  if (typeof content !== 'string') {
+    throw new Error('Gemini response did not include text content.');
+  }
+  return content;
 }
 
 export async function callLLM(prompt, options = {}) {
-  const config = getConfig();
-  const provider = options.provider || config.provider;
+  const provider = resolveProvider(options);
 
   let raw;
   switch (provider) {
@@ -117,24 +138,25 @@ export async function callLLM(prompt, options = {}) {
       throw new Error(`Unknown LLM provider: ${provider}`);
   }
 
-  // Raw mode: return text as-is (for prose, briefs, etc.)
-  if (options.raw) return raw.trim();
-
-  // Parse JSON from response, handling potential markdown wrapping
-  let cleaned = raw.trim();
-  if (cleaned.startsWith('```')) {
-    cleaned = cleaned.replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '');
+  if (options.raw) {
+    return raw.trim();
   }
 
+  const cleaned = stripMarkdownFence(raw.trim());
   try {
     return JSON.parse(cleaned);
-  } catch (e) {
-    console.error(`Failed to parse LLM response as JSON:`, cleaned.slice(0, 200));
-    throw new Error(`LLM returned invalid JSON: ${e.message}`);
+  } catch (error) {
+    throw new Error(`LLM returned invalid JSON: ${error instanceof Error ? error.message : String(error)}`);
   }
 }
 
-// Run multiple prompts in parallel
 export async function callLLMBatch(prompts, options = {}) {
-  return Promise.all(prompts.map(p => callLLM(p, options)));
+  return Promise.all(prompts.map((prompt) => callLLM(prompt, options)));
+}
+
+function stripMarkdownFence(value) {
+  if (!value.startsWith('```')) {
+    return value;
+  }
+  return value.replace(/^```(?:json)?\s*/u, '').replace(/\s*```$/u, '');
 }

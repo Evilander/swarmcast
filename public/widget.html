@@ -1,0 +1,419 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SwarmCast Widget</title>
+  <style>
+    :root {
+      --bg: #0f1218;
+      --surface: #181d27;
+      --border: #252d3a;
+      --text: #e8ecf2;
+      --dim: #6b7a90;
+      --accent: #5eaaf5;
+      --green: #4ade80;
+      --amber: #fbbf24;
+      --red: #f87171;
+      --radius: 10px;
+    }
+
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      font-family: 'Segoe UI Variable', 'Segoe UI', system-ui, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      width: 320px;
+      min-height: 100px;
+      overflow: hidden;
+      -webkit-font-smoothing: antialiased;
+      user-select: none;
+    }
+
+    .widget {
+      padding: 14px 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    /* --- Top row: Location + update time --- */
+    .header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .location {
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--dim);
+      letter-spacing: 0.5px;
+      text-transform: uppercase;
+    }
+    .updated {
+      font-size: 10px;
+      color: var(--dim);
+      opacity: 0.7;
+    }
+
+    /* --- Hero: Temp + Condition --- */
+    .hero {
+      display: flex;
+      align-items: flex-start;
+      gap: 12px;
+    }
+    .temp-now {
+      font-size: 52px;
+      font-weight: 200;
+      line-height: 1;
+      letter-spacing: -2px;
+      color: var(--text);
+    }
+    .temp-unit {
+      font-size: 20px;
+      font-weight: 300;
+      color: var(--dim);
+      vertical-align: top;
+      margin-left: 1px;
+    }
+    .hero-detail {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      padding-top: 8px;
+    }
+    .condition {
+      font-size: 13px;
+      font-weight: 500;
+      color: var(--text);
+    }
+    .feels-like {
+      font-size: 11px;
+      color: var(--dim);
+    }
+
+    /* --- High/Low + Key Stats --- */
+    .stats-row {
+      display: flex;
+      gap: 6px;
+    }
+    .stat {
+      flex: 1;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 8px 10px;
+      text-align: center;
+    }
+    .stat-label {
+      font-size: 9px;
+      color: var(--dim);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin-bottom: 3px;
+    }
+    .stat-value {
+      font-size: 15px;
+      font-weight: 600;
+    }
+    .stat-value.high { color: #f9a857; }
+    .stat-value.low { color: var(--accent); }
+    .stat-value.precip { color: var(--accent); }
+    .stat-value.wind { color: var(--dim); }
+
+    /* --- 3-Day Strip --- */
+    .forecast-strip {
+      display: flex;
+      gap: 4px;
+    }
+    .day-card {
+      flex: 1;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 8px 4px;
+      text-align: center;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 3px;
+    }
+    .day-name {
+      font-size: 10px;
+      color: var(--dim);
+      font-weight: 600;
+      text-transform: uppercase;
+    }
+    .day-icon {
+      font-size: 18px;
+      line-height: 1;
+    }
+    .day-temps {
+      font-size: 11px;
+      font-weight: 500;
+    }
+    .day-high { color: #f9a857; }
+    .day-low { color: var(--dim); }
+
+    /* --- Severe Alert Banner --- */
+    .severe-banner {
+      display: none;
+      background: rgba(239, 68, 68, 0.12);
+      border: 1px solid rgba(239, 68, 68, 0.3);
+      border-radius: var(--radius);
+      padding: 8px 10px;
+      font-size: 11px;
+      color: var(--red);
+      font-weight: 600;
+      gap: 6px;
+      align-items: center;
+    }
+    .severe-banner.active { display: flex; }
+    .severe-icon { font-size: 14px; }
+    .severe-text { flex: 1; }
+
+    /* --- SwarmCast consensus line --- */
+    .consensus-line {
+      display: none;
+      font-size: 11px;
+      color: var(--dim);
+      border-top: 1px solid var(--border);
+      padding-top: 8px;
+      line-height: 1.4;
+    }
+    .consensus-line.active { display: block; }
+    .conf-value {
+      color: var(--accent);
+      font-weight: 600;
+    }
+
+    /* --- Loading state --- */
+    .loading {
+      text-align: center;
+      padding: 40px 0;
+      color: var(--dim);
+      font-size: 12px;
+    }
+    .loading .dot {
+      display: inline-block;
+      animation: pulse 1.4s infinite;
+    }
+    .loading .dot:nth-child(2) { animation-delay: 0.2s; }
+    .loading .dot:nth-child(3) { animation-delay: 0.4s; }
+    @keyframes pulse {
+      0%, 80%, 100% { opacity: 0.3; }
+      40% { opacity: 1; }
+    }
+
+    /* Threat level overrides */
+    body.threat-elevated {
+      --bg: #161210;
+      --surface: #1e1812;
+      --border: #342a1e;
+      --accent: #fbbf24;
+    }
+    body.threat-severe {
+      --bg: #160c0c;
+      --surface: #1e1010;
+      --border: #3a1e1e;
+      --accent: #f87171;
+    }
+  </style>
+</head>
+<body>
+  <div class="widget" id="widget">
+    <div class="loading" id="loading">
+      <span class="dot">.</span><span class="dot">.</span><span class="dot">.</span>
+    </div>
+
+    <div id="content" style="display:none;">
+      <div class="header">
+        <span class="location" id="locationName"></span>
+        <span class="updated" id="updatedAt"></span>
+      </div>
+
+      <div class="severe-banner" id="severeBanner">
+        <span class="severe-icon"></span>
+        <span class="severe-text" id="severeText"></span>
+      </div>
+
+      <div class="hero">
+        <div class="temp-now">
+          <span id="tempNow"></span><span class="temp-unit">°</span>
+        </div>
+        <div class="hero-detail">
+          <span class="condition" id="condition"></span>
+          <span class="feels-like" id="feelsLike"></span>
+        </div>
+      </div>
+
+      <div class="stats-row">
+        <div class="stat">
+          <div class="stat-label">High</div>
+          <div class="stat-value high" id="high"></div>
+        </div>
+        <div class="stat">
+          <div class="stat-label">Low</div>
+          <div class="stat-value low" id="low"></div>
+        </div>
+        <div class="stat">
+          <div class="stat-label">Precip</div>
+          <div class="stat-value precip" id="precip"></div>
+        </div>
+        <div class="stat">
+          <div class="stat-label">Wind</div>
+          <div class="stat-value wind" id="wind"></div>
+        </div>
+      </div>
+
+      <div class="forecast-strip" id="forecastStrip"></div>
+
+      <div class="consensus-line" id="consensusLine"></div>
+    </div>
+  </div>
+
+  <script>
+    const API_BASE = location.origin;
+    const REFRESH_MS = 10 * 60 * 1000;
+
+    // Safe DOM helpers — no innerHTML, XSS-safe
+    function el(tag, attrs, ...children) {
+      const node = document.createElement(tag);
+      if (attrs) {
+        for (const [k, v] of Object.entries(attrs)) {
+          if (k === 'className') node.className = v;
+          else if (k === 'textContent') node.textContent = v;
+          else node.setAttribute(k, v);
+        }
+      }
+      for (const child of children) {
+        if (typeof child === 'string') node.appendChild(document.createTextNode(child));
+        else if (child) node.appendChild(child);
+      }
+      return node;
+    }
+
+    function setText(id, text) {
+      document.getElementById(id).textContent = text;
+    }
+
+    async function load() {
+      try {
+        const [weatherRes, severeRes, historyRes] = await Promise.all([
+          fetch(API_BASE + '/api/weather').then(function(r) { return r.json(); }),
+          fetch(API_BASE + '/api/severe').then(function(r) { return r.json(); }).catch(function() { return null; }),
+          fetch(API_BASE + '/api/history?limit=1').then(function(r) { return r.json(); }).catch(function() { return null; })
+        ]);
+
+        if (!weatherRes.ok) return;
+
+        var s = weatherRes.summary;
+        var cur = s.current;
+        var today = s.futureDays && s.futureDays[0];
+
+        setText('locationName', weatherRes.location || '—');
+        setText('updatedAt', new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }));
+        setText('tempNow', String(Math.round(cur.temp)));
+        setText('condition', cur.condition || '—');
+        setText('feelsLike', 'Feels like ' + Math.round(cur.feelsLike) + '\u00B0');
+
+        if (today) {
+          setText('high', Math.round(today.high) + '\u00B0');
+          setText('low', Math.round(today.low) + '\u00B0');
+          setText('precip', (today.precipProb != null ? today.precipProb : 0) + '%');
+          setText('wind', Math.round(today.windMax || cur.windSpeed) + ' mph');
+        }
+
+        // 3-day forecast strip — safe DOM construction
+        var strip = document.getElementById('forecastStrip');
+        strip.textContent = '';
+        var days = (s.futureDays || []).slice(0, 3);
+        var dayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+        days.forEach(function(day, i) {
+          var d = new Date(day.date + 'T12:00:00');
+          var name = i === 0 ? 'Today' : dayNames[d.getDay()];
+          var card = el('div', { className: 'day-card' },
+            el('div', { className: 'day-name', textContent: name }),
+            el('div', { className: 'day-icon', textContent: conditionEmoji(day.condition) }),
+            el('div', { className: 'day-temps' },
+              el('span', { className: 'day-high', textContent: Math.round(day.high) + '\u00B0' }),
+              ' ',
+              el('span', { className: 'day-low', textContent: Math.round(day.low) + '\u00B0' })
+            )
+          );
+          strip.appendChild(card);
+        });
+
+        // Severe weather
+        if (severeRes && severeRes.ok) {
+          var banner = document.getElementById('severeBanner');
+          var alerts = severeRes.alerts || [];
+          var tomorrow = severeRes.tomorrow;
+
+          if (alerts.length > 0) {
+            setText('severeText', alerts[0].event + ': ' + (alerts[0].headline || '').slice(0, 80));
+            banner.querySelector('.severe-icon').textContent = '\u26A0';
+            banner.classList.add('active');
+            document.body.classList.add('threat-severe');
+          } else if (tomorrow && tomorrow.maxCape >= 1500) {
+            setText('severeText', 'CAPE ' + tomorrow.maxCape + ' J/kg \u2014 ' + (tomorrow.severity && tomorrow.severity.label || 'Elevated'));
+            banner.querySelector('.severe-icon').textContent = '\u26A0';
+            banner.classList.add('active');
+            if (tomorrow.maxCape >= 2500) {
+              document.body.classList.add('threat-severe');
+            } else {
+              document.body.classList.add('threat-elevated');
+            }
+          }
+        }
+
+        // Latest SwarmCast consensus — safe DOM construction
+        var forecasts = (historyRes && historyRes.forecasts) || [];
+        if (forecasts.length > 0 && forecasts[0].consensus) {
+          var c = forecasts[0].consensus;
+          var pred = c.consensus;
+          if (pred) {
+            var line = document.getElementById('consensusLine');
+            line.textContent = '';
+            line.appendChild(document.createTextNode('Swarm: '));
+            line.appendChild(el('span', { className: 'conf-value', textContent: (c.overall_confidence || '—') + '%' }));
+            line.appendChild(document.createTextNode(' confident \u00B7 ' +
+              Math.round(pred.high_temp) + '\u00B0/' + Math.round(pred.low_temp) + '\u00B0 \u00B7 ' +
+              (pred.condition || '') + ' \u00B7 ' + (pred.precip_chance || 0) + '% precip'));
+            line.classList.add('active');
+          }
+        }
+
+        document.getElementById('loading').style.display = 'none';
+        var content = document.getElementById('content');
+        content.style.display = 'flex';
+        content.style.flexDirection = 'column';
+        content.style.gap = '10px';
+
+      } catch (err) {
+        console.error('Widget load error:', err);
+      }
+    }
+
+    function conditionEmoji(condition) {
+      if (!condition) return '\uD83C\uDF21';
+      var c = condition.toLowerCase();
+      if (c.indexOf('thunder') >= 0 || c.indexOf('storm') >= 0) return '\u26C8';
+      if (c.indexOf('snow') >= 0 || c.indexOf('sleet') >= 0) return '\uD83C\uDF28';
+      if (c.indexOf('rain') >= 0 || c.indexOf('drizzle') >= 0 || c.indexOf('shower') >= 0) return '\uD83C\uDF27';
+      if (c.indexOf('fog') >= 0 || c.indexOf('mist') >= 0) return '\uD83C\uDF2B';
+      if (c.indexOf('overcast') >= 0) return '\u2601';
+      if (c.indexOf('cloud') >= 0 || c.indexOf('partly') >= 0) return '\u26C5';
+      if (c.indexOf('clear') >= 0 || c.indexOf('sunny') >= 0) {
+        var hour = new Date().getHours();
+        return (hour >= 6 && hour < 20) ? '\u2600' : '\uD83C\uDF19';
+      }
+      return '\uD83C\uDF21';
+    }
+
+    load();
+    setInterval(load, REFRESH_MS);
+  </script>
+</body>
+</html>

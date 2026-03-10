@@ -20,11 +20,17 @@
 ```bash
 git clone https://github.com/evilander/swarmcast.git
 cd swarmcast
-npm install
+npm ci
 cp .env.example .env
-# Add at least one API key to .env
-npm start
+# Add the provider key for LLM_PROVIDER before starting.
+npm run start:prod
 # Open http://localhost:3777
+```
+
+Run the smoke test suite:
+
+```bash
+npm test
 ```
 
 ## Configuration
@@ -39,16 +45,41 @@ GEMINI_API_KEY=AI...
 
 # Which provider to use
 LLM_PROVIDER=openai
+REQUIRE_LLM_KEY=true
 
 # Location (defaults to Mt. Sterling, IL)
 LATITUDE=39.9870
 LONGITUDE=-90.7601
 LOCATION_NAME=Mt. Sterling, IL
 
+# Server hardening
+NODE_ENV=production
+HOST=0.0.0.0
 PORT=3777
+JSON_BODY_LIMIT=256kb
+REQUEST_TIMEOUT_MS=30000
+EXTERNAL_TIMEOUT_MS=15000
+EXTERNAL_RETRIES=1
+
+# Optional admin protection for mutating routes
+ADMIN_API_KEY=change-me
 ```
 
 Supports **OpenAI**, **Anthropic Claude**, and **Google Gemini** as LLM backends. Switch between them by changing `LLM_PROVIDER`.
+
+## Production Notes
+
+- `NODE_ENV=production` and `REQUIRE_LLM_KEY=true` make the service fail fast if the configured provider key is missing.
+- Mutating routes (`/api/schedule`, `/api/outcome`, `/api/outcome/auto`, `/api/reputation/score`) require the `x-swarmcast-admin-key` header when `ADMIN_API_KEY` is set.
+- Expensive LLM-backed routes are rate-limited in-process by default.
+- `/api/status` is the operational status snapshot and `/api/ready` is the readiness probe.
+
+Run in Docker:
+
+```bash
+docker build -t swarmcast .
+docker run --rm -p 3777:3777 --env-file .env swarmcast
+```
 
 ## The 5 Agents
 
@@ -122,7 +153,8 @@ Supports **OpenAI**, **Anthropic Claude**, and **Google Gemini** as LLM backends
 | `/api/locations` | GET | Available locations |
 | `/api/history` | GET | Past forecasts |
 | `/api/export/:format` | GET | Export as text or JSON |
-| `/api/status` | GET | Health check with uptime/memory |
+| `/api/status` | GET | Runtime status with uptime, memory, storage, and scheduler state |
+| `/api/ready` | GET | Readiness probe for deploy health checks |
 
 ## Keyboard Shortcuts
 

@@ -1,344 +1,320 @@
 import express from 'express';
-import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
+import { fileURLToPath, pathToFileURL } from 'url';
+import { config } from './config.js';
 import { getCurrentAndForecast, summarizeWeatherData, getSevereParams, getNWSAlerts } from './weather.js';
 import { runSwarm } from './swarm.js';
 import { runDebateRound } from './debate.js';
-import { saveForecast, loadForecasts, loadForecastsForDate, saveOutcome, getCalibrationStats } from './storage.js';
+import {
+  getCalibrationStats,
+  getStorageStatus,
+  loadForecasts,
+  loadForecastsForDate,
+  loadScheduleConfig,
+  saveForecast,
+  saveOutcome,
+  saveScheduleConfig
+} from './storage.js';
 import { setupSSE } from './stream.js';
 import { getLocalForecasts } from './local-forecasts.js';
-import { buildAccuracyReport } from './accuracy.js';
+import { buildAccuracyReport, getActualWeather } from './accuracy.js';
 import { LOCATIONS, getLocation } from './locations.js';
 import { callLLM } from './llm.js';
-import { getLeaderboard, batchUpdateReputation, getAgentWeights } from './reputation.js';
-
-// Load .env manually (no dotenv dependency)
-import { readFileSync } from 'fs';
-try {
-  const envPath = join(dirname(fileURLToPath(import.meta.url)), '..', '.env');
-  const envContent = readFileSync(envPath, 'utf-8');
-  for (const line of envContent.split('\n')) {
-    const trimmed = line.trim();
-    if (!trimmed || trimmed.startsWith('#')) continue;
-    const eq = trimmed.indexOf('=');
-    if (eq === -1) continue;
-    const key = trimmed.slice(0, eq).trim();
-    const val = trimmed.slice(eq + 1).trim();
-    if (!process.env[key]) process.env[key] = val;
-  }
-} catch { /* no .env file, use system env */ }
+import { batchUpdateReputation, getAgentWeights, getLeaderboard } from './reputation.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const app = express();
-app.use(express.json());
+const STATIC_DIR = join(__dirname, '..', 'public');
+const ADMIN_HEADER = 'x-swarmcast-admin-key';
+const EXPENSIVE_ROUTE_PATHS = [
+  '/api/forecast',
+  '/api/forecast/quick',
+  '/api/forecast/all',
+  '/api/forecast/multiday',
+  '/api/forecast/stream',
+  '/api/brief',
+  '/api/severe/analysis'
+];
+const ADMIN_ROUTE_PATHS = [
+  '/api/outcome',
+  '/api/outcome/auto',
+  '/api/reputation/score',
+  '/api/schedule'
+];
 
-const PORT = process.env.PORT || 3777;
-const LAT = process.env.LATITUDE || '41.8781';
-const LON = process.env.LONGITUDE || '-87.6298';
-const LOCATION = process.env.LOCATION_NAME || 'Chicago, IL';
-
-app.use(express.static(join(__dirname, '..', 'public')));
-
-// In-memory cache of latest forecast for quick access
 let latestForecast = null;
+let requestSequence = 0;
+let scheduledInterval = null;
+let scheduleRunning = false;
+let scheduleConfig = loadInitialScheduleConfig();
 
-// API: Get current weather data
-app.get('/api/weather', async (req, res) => {
-  try {
-    const lat = req.query.lat || LAT;
-    const lon = req.query.lon || LON;
-    const raw = await getCurrentAndForecast(lat, lon);
-    const summary = summarizeWeatherData(raw);
-    res.json({ ok: true, location: LOCATION, summary, raw });
-  } catch (err) {
-    res.status(500).json({ ok: false, error: err.message });
+class HttpError extends Error {
+  constructor(status, message, options = {}) {
+    super(message);
+    this.name = 'HttpError';
+    this.status = status;
+    this.code = options.code || 'request_error';
+    this.details = options.details || null;
   }
-});
+}
 
-// API: Run the swarm forecast
-app.get('/api/forecast', async (req, res) => {
-  try {
-    const lat = req.query.lat || LAT;
-    const lon = req.query.lon || LON;
-    const location = req.query.location || LOCATION;
-    const targetDate = req.query.date || getTomorrowDate();
-    const withDebate = req.query.debate !== 'false';
+export function createApp() {
+  const app = express();
+  app.disable('x-powered-by');
+  if (config.server.trustProxy) {
+    app.set('trust proxy', true);
+  }
 
-    console.log(`\n${'═'.repeat(60)}`);
-    console.log(`🌐 SwarmCast forecast requested for ${location}`);
-    console.log(`📅 Target: ${targetDate}`);
-    console.log(`💬 Debate: ${withDebate ? 'yes' : 'no'}`);
-    console.log(`${'═'.repeat(60)}\n`);
+  app.use(assignRequestId);
+  app.use(applySecurityHeaders);
+  app.use(express.json({ limit: config.server.jsonBodyLimit }));
+  app.use(express.urlencoded({ extended: false, limit: config.server.jsonBodyLimit }));
+  app.use(logRequests);
+  app.use(EXPENSIVE_ROUTE_PATHS, createRateLimiter({
+    windowMs: config.rateLimits.windowMs,
+    maxRequests: config.rateLimits.expensiveRequests,
+    bucket: 'expensive'
+  }));
+  app.use(ADMIN_ROUTE_PATHS, createRateLimiter({
+    windowMs: config.rateLimits.windowMs,
+    maxRequests: config.rateLimits.adminRequests,
+    bucket: 'admin'
+  }));
+  app.use(ADMIN_ROUTE_PATHS, requireAdminIfConfigured);
+  app.use(express.static(STATIC_DIR, {
+    index: 'index.html',
+    maxAge: config.nodeEnv === 'production' ? '1h' : 0
+  }));
 
-    const raw = await getCurrentAndForecast(lat, lon);
+  app.get('/api/weather', handleAsync(async (req, res) => {
+    const { latitude, longitude } = getRequestedCoordinates(req);
+    const displayLocation = getDisplayLocation(req);
+    const raw = await getCurrentAndForecast(latitude, longitude);
     const summary = summarizeWeatherData(raw);
-    const result = await runSwarm(summary, location, targetDate, { lat, lon });
+    res.json({ ok: true, location: displayLocation, summary, raw });
+  }));
+
+  app.get('/api/forecast', handleAsync(async (req, res) => {
+    const { latitude, longitude } = getRequestedCoordinates(req);
+    const location = getDisplayLocation(req);
+    const targetDate = getRequestedDate(req.query.date, getTomorrowDate());
+    const withDebate = getBooleanQuery(req.query.debate, true);
+
+    const raw = await getCurrentAndForecast(latitude, longitude);
+    const summary = summarizeWeatherData(raw);
+    const result = await runSwarm(summary, location, targetDate, {
+      lat: latitude,
+      lon: longitude
+    });
     result.weather = summary;
 
-    // Run debate round if enabled
     if (withDebate && result.consensus) {
       result.debate = await runDebateRound(result.agents, result.consensus, location, targetDate);
     }
 
-    // Save to disk
     saveForecast(result);
     latestForecast = result;
-
     res.json({ ok: true, ...result });
-  } catch (err) {
-    console.error('Forecast error:', err);
-    res.status(500).json({ ok: false, error: err.message });
-  }
-});
+  }));
 
-// API: Run a quick forecast without debate (faster)
-app.get('/api/forecast/quick', async (req, res) => {
-  try {
-    const lat = req.query.lat || LAT;
-    const lon = req.query.lon || LON;
-    const location = req.query.location || LOCATION;
-    const targetDate = req.query.date || getTomorrowDate();
+  app.get('/api/forecast/quick', handleAsync(async (req, res) => {
+    const { latitude, longitude } = getRequestedCoordinates(req);
+    const location = getDisplayLocation(req);
+    const targetDate = getRequestedDate(req.query.date, getTomorrowDate());
 
-    const raw = await getCurrentAndForecast(lat, lon);
+    const raw = await getCurrentAndForecast(latitude, longitude);
     const summary = summarizeWeatherData(raw);
-    const result = await runSwarm(summary, location, targetDate, { lat, lon });
+    const result = await runSwarm(summary, location, targetDate, {
+      lat: latitude,
+      lon: longitude
+    });
     result.weather = summary;
 
     saveForecast(result);
     latestForecast = result;
-
     res.json({ ok: true, ...result });
-  } catch (err) {
-    res.status(500).json({ ok: false, error: err.message });
-  }
-});
+  }));
 
-// API: Forecast all locations at once (parallel)
-app.get('/api/forecast/all', async (req, res) => {
-  try {
-    const targetDate = req.query.date || getTomorrowDate();
-    console.log(`\n🌐 Forecasting ALL locations for ${targetDate}...`);
-
+  app.get('/api/forecast/all', handleAsync(async (req, res) => {
+    const targetDate = getRequestedDate(req.query.date, getTomorrowDate());
     const results = await Promise.allSettled(
-      LOCATIONS.map(async (loc) => {
-        const raw = await getCurrentAndForecast(loc.lat, loc.lon);
+      LOCATIONS.map(async (location) => {
+        const raw = await getCurrentAndForecast(location.lat, location.lon);
         const summary = summarizeWeatherData(raw);
-        const result = await runSwarm(summary, loc.name, targetDate, { lat: loc.lat, lon: loc.lon });
-        result.weather = summary;
-        saveForecast(result);
-        console.log(`  ✅ ${loc.name}: High ${result.consensus?.consensus?.high_temp}°F`);
-        return { location: loc, forecast: result, ok: true };
+        const forecast = await runSwarm(summary, location.name, targetDate, {
+          lat: location.lat,
+          lon: location.lon
+        });
+        forecast.weather = summary;
+        saveForecast(forecast);
+        return { location, forecast, ok: true };
       })
     );
 
-    const mapped = results.map((r, i) =>
-      r.status === 'fulfilled' ? r.value : { location: LOCATIONS[i], ok: false, error: r.reason?.message }
-    );
+    res.json({
+      ok: true,
+      date: targetDate,
+      results: results.map((entry, index) => (
+        entry.status === 'fulfilled'
+          ? entry.value
+          : {
+              location: LOCATIONS[index],
+              ok: false,
+              error: entry.reason instanceof Error ? entry.reason.message : String(entry.reason)
+            }
+      ))
+    });
+  }));
 
-    res.json({ ok: true, date: targetDate, results: mapped });
-  } catch (err) {
-    res.status(500).json({ ok: false, error: err.message });
-  }
-});
-
-// API: Multi-day forecast (3 days)
-app.get('/api/forecast/multiday', async (req, res) => {
-  try {
-    const lat = req.query.lat || LAT;
-    const lon = req.query.lon || LON;
-    const location = req.query.location || LOCATION;
-    const days = Math.min(parseInt(req.query.days) || 3, 5);
-
-    const raw = await getCurrentAndForecast(lat, lon);
+  app.get('/api/forecast/multiday', handleAsync(async (req, res) => {
+    const { latitude, longitude } = getRequestedCoordinates(req);
+    const location = getDisplayLocation(req);
+    const days = getIntegerQuery(req.query.days, { name: 'days', defaultValue: 3, min: 1, max: 5 });
+    const raw = await getCurrentAndForecast(latitude, longitude);
     const summary = summarizeWeatherData(raw);
 
-    const results = [];
-    for (let i = 1; i <= days; i++) {
-      const d = new Date();
-      d.setDate(d.getDate() + i);
-      const targetDate = localDateStr(d);
-      console.log(`\n📅 Day ${i}: ${targetDate}`);
-
-      const result = await runSwarm(summary, location, targetDate, { lat, lon });
-      result.weather = summary;
-      saveForecast(result);
-      results.push(result);
+    const forecasts = [];
+    for (let offset = 1; offset <= days; offset += 1) {
+      const date = new Date();
+      date.setDate(date.getDate() + offset);
+      const targetDate = localDateStr(date);
+      const forecast = await runSwarm(summary, location, targetDate, {
+        lat: latitude,
+        lon: longitude
+      });
+      forecast.weather = summary;
+      saveForecast(forecast);
+      forecasts.push(forecast);
     }
 
-    res.json({ ok: true, location, days: results });
-  } catch (err) {
-    res.status(500).json({ ok: false, error: err.message });
-  }
-});
+    res.json({ ok: true, location, days: forecasts });
+  }));
 
-// API: Get forecast history (from disk)
-app.get('/api/history', (req, res) => {
-  const limit = parseInt(req.query.limit) || 20;
-  const forecasts = loadForecasts(limit);
-  res.json({ ok: true, forecasts });
-});
+  app.get('/api/history', (req, res) => {
+    const limit = getIntegerQuery(req.query.limit, { name: 'limit', defaultValue: 20, min: 1, max: 100 });
+    res.json({ ok: true, forecasts: loadForecasts(limit) });
+  });
 
-// API: Get forecasts for a specific date
-app.get('/api/history/:date', (req, res) => {
-  const forecasts = loadForecastsForDate(req.params.date);
-  res.json({ ok: true, date: req.params.date, forecasts });
-});
+  app.get('/api/history/:date', (req, res) => {
+    const targetDate = getRequestedDate(req.params.date, null, { required: true });
+    res.json({ ok: true, date: targetDate, forecasts: loadForecastsForDate(targetDate) });
+  });
 
-// API: Record actual outcome for calibration
-app.post('/api/outcome', (req, res) => {
-  try {
-    const { date, actual } = req.body;
-    if (!date || !actual) {
-      return res.status(400).json({ ok: false, error: 'date and actual fields required' });
-    }
-    saveOutcome(date, actual);
-    res.json({ ok: true, date });
-  } catch (err) {
-    res.status(500).json({ ok: false, error: err.message });
-  }
-});
+  app.post('/api/outcome', (req, res) => {
+    const targetDate = getRequestedDate(req.body?.date, null, { required: true });
+    const actual = normalizeOutcomePayload(req.body?.actual);
+    saveOutcome(targetDate, actual);
+    res.json({ ok: true, date: targetDate });
+  });
 
-// API: Auto-record yesterday's outcome from Open-Meteo
-app.post('/api/outcome/auto', async (req, res) => {
-  try {
+  app.post('/api/outcome/auto', handleAsync(async (req, res) => {
+    const { latitude, longitude } = getRequestedCoordinates(req);
     const yesterday = new Date();
     yesterday.setDate(yesterday.getDate() - 1);
-    const date = localDateStr(yesterday);
+    const targetDate = localDateStr(yesterday);
 
-    const lat = req.query.lat || LAT;
-    const lon = req.query.lon || LON;
-    const raw = await getCurrentAndForecast(lat, lon);
+    const raw = await getCurrentAndForecast(latitude, longitude);
     const summary = summarizeWeatherData(raw);
-
-    // Find yesterday in past days
-    const yesterdayData = summary.pastDays.find(d => d.date === date);
-    if (!yesterdayData) {
-      return res.status(404).json({ ok: false, error: `No data found for ${date}` });
+    const actualDay = summary.pastDays.find((day) => day.date === targetDate);
+    if (!actualDay) {
+      throw new HttpError(404, `No data found for ${targetDate}.`);
     }
 
-    const actualData = {
-      high_temp: yesterdayData.high,
-      low_temp: yesterdayData.low,
-      condition: yesterdayData.condition,
-      precip_sum: yesterdayData.precipSum,
-      wind_max: yesterdayData.windMax
+    const actual = {
+      high_temp: actualDay.high,
+      low_temp: actualDay.low,
+      condition: actualDay.condition,
+      precip_sum: actualDay.precipSum,
+      wind_max: actualDay.windMax
     };
-    saveOutcome(date, actualData);
+    saveOutcome(targetDate, actual);
 
-    // Auto-score agent reputation against actuals
-    const pastForecasts = loadForecastsForDate(date);
-    let reputationUpdates = [];
-    for (const forecast of pastForecasts) {
-      const results = batchUpdateReputation(forecast, {
-        high: yesterdayData.high,
-        low: yesterdayData.low,
-        precip: yesterdayData.precipSum,
-        windMax: yesterdayData.windMax
-      });
-      reputationUpdates.push(...results);
+    const reputationUpdates = [];
+    for (const forecast of loadForecastsForDate(targetDate)) {
+      reputationUpdates.push(...batchUpdateReputation(forecast, {
+        high: actualDay.high,
+        low: actualDay.low,
+        precip: actualDay.precipSum,
+        windMax: actualDay.windMax
+      }));
     }
 
-    res.json({ ok: true, date, actual: yesterdayData, reputationUpdates });
-  } catch (err) {
-    res.status(500).json({ ok: false, error: err.message });
-  }
-});
+    res.json({ ok: true, date: targetDate, actual, reputationUpdates });
+  }));
 
-// API: Calibration stats
-app.get('/api/calibration', (req, res) => {
-  const stats = getCalibrationStats();
-  res.json({ ok: true, stats });
-});
+  app.get('/api/calibration', (req, res) => {
+    res.json({ ok: true, stats: getCalibrationStats() });
+  });
 
-// API: Get local station forecasts for comparison
-app.get('/api/local', async (req, res) => {
-  try {
-    const lat = req.query.lat || LAT;
-    const lon = req.query.lon || LON;
-    const forecasts = await getLocalForecasts(lat, lon);
+  app.get('/api/local', handleAsync(async (req, res) => {
+    const { latitude, longitude } = getRequestedCoordinates(req);
+    const forecasts = await getLocalForecasts(latitude, longitude);
     res.json({ ok: true, forecasts });
-  } catch (err) {
-    res.status(500).json({ ok: false, error: err.message });
-  }
-});
+  }));
 
-// SSE streaming endpoint
-setupSSE(app, async (lat, lon) => {
-  const raw = await getCurrentAndForecast(lat, lon);
-  return summarizeWeatherData(raw);
-});
+  app.get('/api/locations', (req, res) => {
+    res.json({ ok: true, locations: LOCATIONS, default: LOCATIONS[0]?.id || null });
+  });
 
-// API: Available locations
-app.get('/api/locations', (req, res) => {
-  res.json({ ok: true, locations: LOCATIONS, default: LOCATIONS[0].id });
-});
-
-// API: Morning weather brief — conversational forecast for reading with coffee
-app.get('/api/brief', async (req, res) => {
-  try {
-    const locId = req.query.location || 'mt-sterling';
-    const loc = getLocation(locId);
-    const lat = loc.lat;
-    const lon = loc.lon;
-
-    // Get weather data
-    const raw = await getCurrentAndForecast(lat, lon);
+  app.get('/api/brief', handleAsync(async (req, res) => {
+    const location = getLocationFromQuery(req.query.location || LOCATIONS[0]?.id);
+    const raw = await getCurrentAndForecast(location.lat, location.lon);
     const summary = summarizeWeatherData(raw);
 
-    // Get NWS forecast
     let nwsDetail = '';
     try {
-      const localForecasts = await getLocalForecasts(lat, lon);
-      const nws = localForecasts.find(f => f.source === 'nws');
+      const localForecasts = await getLocalForecasts(location.lat, location.lon);
+      const nws = localForecasts.find((item) => item.source === 'nws');
       if (nws?.forecast) {
-        nwsDetail = `NWS official forecast: ${nws.forecast.condition}, High ${nws.forecast.high}°F, Wind ${nws.forecast.wind} ${nws.forecast.windDir}, Precip ${nws.forecast.precipProb}%. Detail: ${nws.forecast.detail}`;
+        nwsDetail = `NWS official forecast: ${nws.forecast.condition}, High ${nws.forecast.high}F, Wind ${nws.forecast.wind} ${nws.forecast.windDir}, Precip ${nws.forecast.precipProb}%. Detail: ${nws.forecast.detail}`;
       }
-    } catch { /* NWS unavailable */ }
-
-    // Get severe weather params
-    let severeContext = '';
-    try {
-      const severeParams = await getSevereParams(lat, lon);
-      const tomorrow = getTomorrowDate();
-      const tmrw = severeParams?.find(d => d.date === tomorrow);
-      if (tmrw && tmrw.maxCape >= 1000) {
-        severeContext = `
-SEVERE WEATHER DATA FOR TOMORROW:
-Max CAPE: ${tmrw.maxCape} J/kg (${tmrw.maxCape >= 2500 ? 'EXTREME instability' : tmrw.maxCape >= 1500 ? 'strong instability' : 'moderate instability'})
-Peak instability: ${tmrw.peakCapeTime || 'afternoon'}
-Max wind gusts: ${tmrw.maxGusts} mph
-Severity level: ${tmrw.severity.label}
-${tmrw.maxCape >= 2000 ? 'THIS IS A SIGNIFICANT SEVERE WEATHER DAY. Mention the severe threat prominently.' : ''}`;
-      }
-    } catch { /* severe data unavailable */ }
-
-    // Get latest swarm forecast if available
-    const forecasts = loadForecasts(5);
-    const latest = forecasts.find(f => f.location === loc.name);
-    let swarmContext = '';
-    if (latest?.consensus) {
-      const c = latest.consensus;
-      swarmContext = `
-SwarmCast prediction (${c.overall_confidence}% confidence, ${c.agreement_score}% agreement):
-High ${c.consensus.high_temp}°F / Low ${c.consensus.low_temp}°F
-Condition: ${c.consensus.condition}
-Precip chance: ${c.consensus.precip_chance}%
-Severe risk: ${c.consensus.severe_risk}
-Narrative: ${c.narrative}
-Key dissent: ${c.key_dissent || 'None'}
-Watch items: ${(c.watch_items || []).join('; ')}`;
+    } catch {
+      nwsDetail = '';
     }
 
-    const briefPrompt = `You are a witty, warm weather briefer for a small-town morning newsletter in western Illinois. Write a 3-4 paragraph morning weather brief for ${loc.name} that someone would enjoy reading with their coffee.
+    let severeContext = '';
+    try {
+      const severeParams = await getSevereParams(location.lat, location.lon);
+      const tomorrow = getTomorrowDate();
+      const severeTomorrow = severeParams?.find((day) => day.date === tomorrow);
+      if (severeTomorrow && severeTomorrow.maxCape >= 1000) {
+        severeContext = `
+SEVERE WEATHER DATA FOR TOMORROW:
+Max CAPE: ${severeTomorrow.maxCape} J/kg
+Peak instability: ${severeTomorrow.peakCapeTime || 'afternoon'}
+Max wind gusts: ${severeTomorrow.maxGusts} mph
+Severity level: ${severeTomorrow.severity.label}
+${severeTomorrow.maxCape >= 2000 ? 'This is a significant severe weather day. Mention the severe threat prominently.' : ''}`;
+      }
+    } catch {
+      severeContext = '';
+    }
+
+    const forecasts = loadForecasts(5);
+    const recentForecast = forecasts.find((forecast) => forecast.location === location.name);
+    let swarmContext = '';
+    if (recentForecast?.consensus) {
+      const consensus = recentForecast.consensus;
+      swarmContext = `
+SwarmCast prediction (${consensus.overall_confidence}% confidence, ${consensus.agreement_score}% agreement):
+High ${consensus.consensus.high_temp}F / Low ${consensus.consensus.low_temp}F
+Condition: ${consensus.consensus.condition}
+Precip chance: ${consensus.consensus.precip_chance}%
+Severe risk: ${consensus.consensus.severe_risk}
+Narrative: ${consensus.narrative}
+Key dissent: ${consensus.key_dissent || 'None'}
+Watch items: ${(consensus.watch_items || []).join('; ')}`;
+    }
+
+    const briefPrompt = `You are a witty, warm weather briefer for a small-town morning newsletter in western Illinois. Write a 3-4 paragraph morning weather brief for ${location.name} that someone would enjoy reading with their coffee.
 
 Current conditions right now:
-Temperature: ${summary.current.temp}°F (feels like ${summary.current.feelsLike}°F)
+Temperature: ${summary.current.temp}F (feels like ${summary.current.feelsLike}F)
 Condition: ${summary.current.condition}
 Humidity: ${summary.current.humidity}%
 Wind: ${summary.current.windSpeed} mph
 
 Today's forecast:
-${summary.futureDays[0] ? `High ${summary.futureDays[0].high}°F / Low ${summary.futureDays[0].low}°F, ${summary.futureDays[0].condition}, Precip ${summary.futureDays[0].precipProb}%` : 'Not available'}
+${summary.futureDays[0] ? `High ${summary.futureDays[0].high}F / Low ${summary.futureDays[0].low}F, ${summary.futureDays[0].condition}, Precip ${summary.futureDays[0].precipProb}%` : 'Not available'}
 
 ${nwsDetail}
 
@@ -347,161 +323,142 @@ ${swarmContext}
 ${severeContext}
 
 Tomorrow:
-${summary.futureDays[1] ? `High ${summary.futureDays[1].high}°F / Low ${summary.futureDays[1].low}°F, ${summary.futureDays[1].condition}` : 'Not available'}
+${summary.futureDays[1] ? `High ${summary.futureDays[1].high}F / Low ${summary.futureDays[1].low}F, ${summary.futureDays[1].condition}` : 'Not available'}
 
 Guidelines:
-- Start with the vibe: what's it feel like out there right now?
-- Practical advice: jacket? umbrella? sunscreen?
-- If the swarm has dissenting opinions, mention it casually ("though our contrarian thinks...")
-- If severe weather data shows high CAPE or severe risk, lead with safety and timing — but keep it conversational, not alarmist
-- Keep it conversational but informative
-- Reference local landmarks or activities when relevant (Mississippi River, farming, commute to Quincy)
-- End with a quick look-ahead at tomorrow
-- No JSON, no structured data — just flowing prose
+- Start with the vibe: what does it feel like outside right now?
+- Give practical advice about jacket, umbrella, or sunscreen decisions.
+- If the swarm has dissenting opinions, mention it casually.
+- If severe weather data shows elevated risk, lead with safety and timing without sounding alarmist.
+- Keep it conversational but informative.
+- Reference local landmarks or activities when relevant.
+- End with a quick look-ahead at tomorrow.
+- Respond with only the brief text, with no title or JSON.`;
 
-Respond with ONLY the brief text, no labels or headers.`;
+    const brief = await callLLM(briefPrompt, {
+      temperature: 0.8,
+      raw: true,
+      maxTokens: 1500
+    });
 
-    const briefText = await callLLM(briefPrompt, { temperature: 0.8, raw: true, maxTokens: 1500 });
     res.json({
       ok: true,
-      location: loc.name,
-      brief: briefText,
+      location: location.name,
+      brief,
       timestamp: new Date().toISOString()
     });
-  } catch (err) {
-    res.status(500).json({ ok: false, error: err.message });
-  }
-});
+  }));
 
-// API: Accuracy report — how good have our predictions been?
-app.get('/api/accuracy', async (req, res) => {
-  try {
-    const lat = req.query.lat || LAT;
-    const lon = req.query.lon || LON;
-    const report = await buildAccuracyReport(lat, lon);
-    res.json({ ok: true, ...report });
-  } catch (err) {
-    res.status(500).json({ ok: false, error: err.message });
-  }
-});
+  app.get('/api/accuracy', handleAsync(async (req, res) => {
+    const { latitude, longitude } = getRequestedCoordinates(req);
+    res.json({ ok: true, ...(await buildAccuracyReport(latitude, longitude)) });
+  }));
 
-// API: Export forecast as shareable text
-app.get('/api/export/:format', (req, res) => {
-  const forecasts = loadForecasts(1);
-  if (forecasts.length === 0) {
-    return res.status(404).json({ ok: false, error: 'No forecasts available' });
-  }
+  app.get('/api/export/:format', (req, res) => {
+    const format = String(req.params.format || '').trim().toLowerCase();
+    if (!['text', 'json'].includes(format)) {
+      throw new HttpError(400, 'Supported formats: text, json.');
+    }
 
-  const f = forecasts[0];
-  const c = f.consensus;
+    const forecast = loadForecasts(1)[0];
+    if (!forecast) {
+      throw new HttpError(404, 'No forecasts available.');
+    }
 
-  if (req.params.format === 'text') {
+    if (format === 'json') {
+      res.json({ ok: true, forecast });
+      return;
+    }
+
+    const consensus = forecast.consensus;
     const lines = [
-      `🐝 SwarmCast Forecast — ${f.location}`,
-      `📅 ${f.targetDate}`,
-      `⏰ Generated: ${new Date(f.timestamp).toLocaleString()}`,
+      `SwarmCast Forecast - ${forecast.location}`,
+      `${forecast.targetDate}`,
+      `Generated: ${new Date(forecast.timestamp).toLocaleString()}`,
       '',
-      `═══ CONSENSUS ═══`,
-      `🌡️ High: ${c.consensus.high_temp}°F | Low: ${c.consensus.low_temp}°F`,
-      `🌤️ ${c.consensus.condition}`,
-      `🌧️ Precip: ${c.consensus.precip_chance}%`,
-      `💨 Wind: ${c.consensus.wind_max} mph`,
-      `⚠️ Severe Risk: ${c.consensus.severe_risk}`,
-      `📊 Confidence: ${c.overall_confidence}% | Agreement: ${c.agreement_score}%`,
+      '=== CONSENSUS ===',
+      `High: ${consensus.consensus.high_temp}F | Low: ${consensus.consensus.low_temp}F`,
+      `${consensus.consensus.condition}`,
+      `Precip: ${consensus.consensus.precip_chance}%`,
+      `Wind: ${consensus.consensus.wind_max} mph`,
+      `Severe Risk: ${consensus.consensus.severe_risk}`,
+      `Confidence: ${consensus.overall_confidence}% | Agreement: ${consensus.agreement_score}%`,
       '',
-      c.narrative,
+      consensus.narrative,
       '',
-      `═══ AGENT BREAKDOWN ═══`,
-      ...f.agents.filter(a => a.result).map(a => {
-        const r = a.result;
-        return `${a.emoji} ${a.name} (${r.confidence}%): ${r.prediction.high_temp}°/${r.prediction.low_temp}° — ${r.reasoning}`;
-      }),
+      '=== AGENT BREAKDOWN ===',
+      ...forecast.agents
+        .filter((agent) => agent.result)
+        .map((agent) => {
+          const result = agent.result;
+          return `${agent.emoji} ${agent.name} (${result.confidence}%): ${result.prediction.high_temp}F/${result.prediction.low_temp}F - ${result.reasoning}`;
+        }),
       '',
-      c.key_dissent && c.key_dissent !== 'None' ? `⚡ Key Dissent: ${c.key_dissent}` : '',
+      consensus.key_dissent && consensus.key_dissent !== 'None' ? `Key Dissent: ${consensus.key_dissent}` : '',
       '',
-      `Generated by SwarmCast v0.1.0 — Multi-Agent Weather Prediction`
-    ];
+      `Generated by SwarmCast v${config.version}`
+    ].filter(Boolean);
 
-    res.type('text/plain').send(lines.filter(l => l !== undefined).join('\n'));
-  } else if (req.params.format === 'json') {
-    res.json({ ok: true, forecast: f });
-  } else {
-    res.status(400).json({ ok: false, error: 'Supported formats: text, json' });
-  }
-});
+    res.type('text/plain').send(lines.join('\n'));
+  });
 
-// API: Severe weather outlook — convective params + NWS alerts
-app.get('/api/severe', async (req, res) => {
-  try {
-    const locId = req.query.location || 'mt-sterling';
-    const loc = getLocation(locId);
-
-    const [severeParams, alerts] = await Promise.all([
-      getSevereParams(loc.lat, loc.lon),
-      getNWSAlerts(loc.lat, loc.lon)
+  app.get('/api/severe', handleAsync(async (req, res) => {
+    const location = getLocationFromQuery(req.query.location || LOCATIONS[0]?.id);
+    const [days, alerts] = await Promise.all([
+      getSevereParams(location.lat, location.lon),
+      getNWSAlerts(location.lat, location.lon)
     ]);
-
-    // Find tomorrow's severe data
     const tomorrow = getTomorrowDate();
-    const tomorrowSevere = severeParams?.find(d => d.date === tomorrow);
-
     res.json({
       ok: true,
-      location: loc.name,
+      location: location.name,
       alerts,
-      days: severeParams || [],
-      tomorrow: tomorrowSevere || null,
+      days: days || [],
+      tomorrow: days?.find((day) => day.date === tomorrow) || null,
       hasActiveAlerts: alerts.length > 0,
       timestamp: new Date().toISOString()
     });
-  } catch (err) {
-    res.status(500).json({ ok: false, error: err.message });
-  }
-});
+  }));
 
-// API: Severe weather analysis — LLM interprets the convective data
-app.get('/api/severe/analysis', async (req, res) => {
-  try {
-    const locId = req.query.location || 'mt-sterling';
-    const loc = getLocation(locId);
-
-    const [severeParams, alerts, rawWeather] = await Promise.all([
-      getSevereParams(loc.lat, loc.lon),
-      getNWSAlerts(loc.lat, loc.lon),
-      getCurrentAndForecast(loc.lat, loc.lon)
+  app.get('/api/severe/analysis', handleAsync(async (req, res) => {
+    const location = getLocationFromQuery(req.query.location || LOCATIONS[0]?.id);
+    const [days, alerts, rawWeather] = await Promise.all([
+      getSevereParams(location.lat, location.lon),
+      getNWSAlerts(location.lat, location.lon),
+      getCurrentAndForecast(location.lat, location.lon)
     ]);
 
     const summary = summarizeWeatherData(rawWeather);
     const tomorrow = getTomorrowDate();
-    const tomorrowSevere = severeParams?.find(d => d.date === tomorrow);
-    const tomorrowForecast = summary.futureDays.find(d => d.date === tomorrow);
+    const severeTomorrow = days?.find((day) => day.date === tomorrow);
+    const forecastTomorrow = summary.futureDays.find((day) => day.date === tomorrow);
 
-    const analysisPrompt = `You are a severe weather analyst for western Illinois. Analyze these conditions for ${loc.name} on ${tomorrow} and provide a detailed severe weather threat assessment.
+    const analysisPrompt = `You are a severe weather analyst for western Illinois. Analyze these conditions for ${location.name} on ${tomorrow} and provide a detailed severe weather threat assessment.
 
 CONVECTIVE PARAMETERS:
-- Max CAPE: ${tomorrowSevere?.maxCape || 0} J/kg (peak at ${tomorrowSevere?.peakCapeTime || 'unknown'})
-- Average CAPE: ${tomorrowSevere?.avgCape || 0} J/kg
-- Max Wind Gusts: ${tomorrowSevere?.maxGusts || 0} mph
-- Max Sustained Wind: ${tomorrowSevere?.maxWind || 0} mph
-- Max Precip Probability: ${tomorrowSevere?.maxPrecipProb || 0}%
-- Thunderstorm Hours (code >= 95): ${tomorrowSevere?.thunderstormHours || 0}
-- Storm Hours (code >= 80): ${tomorrowSevere?.stormHours || 0}
-- Severity Assessment: ${tomorrowSevere?.severity?.label || 'N/A'}
+- Max CAPE: ${severeTomorrow?.maxCape || 0} J/kg (peak at ${severeTomorrow?.peakCapeTime || 'unknown'})
+- Average CAPE: ${severeTomorrow?.avgCape || 0} J/kg
+- Max Wind Gusts: ${severeTomorrow?.maxGusts || 0} mph
+- Max Sustained Wind: ${severeTomorrow?.maxWind || 0} mph
+- Max Precip Probability: ${severeTomorrow?.maxPrecipProb || 0}%
+- Thunderstorm Hours (code >= 95): ${severeTomorrow?.thunderstormHours || 0}
+- Storm Hours (code >= 80): ${severeTomorrow?.stormHours || 0}
+- Severity Assessment: ${severeTomorrow?.severity?.label || 'N/A'}
 
 SURFACE CONDITIONS:
-- Current Temp: ${summary.current.temp}°F
+- Current Temp: ${summary.current.temp}F
 - Humidity: ${summary.current.humidity}%
 - Wind: ${summary.current.windSpeed} mph
 - Pressure: ${summary.current.pressure} hPa
 
 FORECAST:
-- High: ${tomorrowForecast?.high || '?'}°F / Low: ${tomorrowForecast?.low || '?'}°F
-- Condition: ${tomorrowForecast?.condition || 'unknown'}
-- Precip Prob: ${tomorrowForecast?.precipProb || 0}%
-- Wind Max: ${tomorrowForecast?.windMax || 0} mph
-- Gust Max: ${tomorrowForecast?.gustMax || 0} mph
+- High: ${forecastTomorrow?.high || '?'}F / Low: ${forecastTomorrow?.low || '?'}F
+- Condition: ${forecastTomorrow?.condition || 'unknown'}
+- Precip Prob: ${forecastTomorrow?.precipProb || 0}%
+- Wind Max: ${forecastTomorrow?.windMax || 0} mph
+- Gust Max: ${forecastTomorrow?.gustMax || 0} mph
 
-ACTIVE NWS ALERTS: ${alerts.length > 0 ? alerts.map(a => `${a.event}: ${a.headline}`).join('; ') : 'None'}
+ACTIVE NWS ALERTS: ${alerts.length > 0 ? alerts.map((alert) => `${alert.event}: ${alert.headline}`).join('; ') : 'None'}
 
 Respond with JSON:
 {
@@ -520,203 +477,555 @@ Respond with JSON:
 }`;
 
     const analysis = await callLLM(analysisPrompt, { maxTokens: 1500 });
-
     res.json({
       ok: true,
-      location: loc.name,
+      location: location.name,
       date: tomorrow,
-      convective: tomorrowSevere,
+      convective: severeTomorrow,
       alerts,
       analysis,
       timestamp: new Date().toISOString()
     });
-  } catch (err) {
-    res.status(500).json({ ok: false, error: err.message });
-  }
-});
+  }));
 
-// API: Agent reputation leaderboard
-app.get('/api/reputation', (req, res) => {
-  const leaderboard = getLeaderboard();
-  const weights = getAgentWeights();
-  res.json({ ok: true, leaderboard, weights });
-});
+  app.get('/api/reputation', (req, res) => {
+    res.json({ ok: true, leaderboard: getLeaderboard(), weights: getAgentWeights() });
+  });
 
-// API: Score agents against actuals and update reputation
-app.post('/api/reputation/score', async (req, res) => {
-  try {
-    const { date } = req.body;
-    const targetDate = date || (() => {
-      const d = new Date();
-      d.setDate(d.getDate() - 1);
-      return localDateStr(d);
-    })();
-
-    const locId = req.body.location || 'mt-sterling';
-    const loc = getLocation(locId);
-
-    // Get the forecast for that date
+  app.post('/api/reputation/score', handleAsync(async (req, res) => {
+    const targetDate = getRequestedDate(req.body?.date, localDateStr(addDays(new Date(), -1)));
+    const location = getLocationFromQuery(req.body?.location || LOCATIONS[0]?.id);
     const forecasts = loadForecastsForDate(targetDate);
     if (forecasts.length === 0) {
-      return res.status(404).json({ ok: false, error: `No forecasts found for ${targetDate}` });
+      throw new HttpError(404, `No forecasts found for ${targetDate}.`);
     }
 
-    // Get actual weather
-    const { getActualWeather } = await import('./accuracy.js');
-    const actual = await getActualWeather(loc.lat, loc.lon, targetDate);
+    const actual = await getActualWeather(location.lat, location.lon, targetDate);
     if (!actual) {
-      return res.status(404).json({ ok: false, error: `No actual weather data for ${targetDate}` });
+      throw new HttpError(404, `No actual weather data found for ${targetDate}.`);
     }
 
-    // Score each forecast's agents
-    const allResults = [];
+    const agentScores = [];
     for (const forecast of forecasts) {
-      const results = batchUpdateReputation(forecast, actual);
-      allResults.push(...results);
+      agentScores.push(...batchUpdateReputation(forecast, actual));
     }
 
     res.json({
       ok: true,
       date: targetDate,
       actual,
-      agentScores: allResults,
+      agentScores,
       updatedLeaderboard: getLeaderboard()
     });
-  } catch (err) {
-    res.status(500).json({ ok: false, error: err.message });
-  }
-});
+  }));
 
-// Scheduled forecast system
-let scheduledInterval = null;
-let scheduleConfig = { enabled: false, intervalHours: 6, locations: ['mt-sterling'] };
+  app.get('/api/schedule', (req, res) => {
+    res.json({
+      ok: true,
+      ...scheduleConfig,
+      active: Boolean(scheduledInterval),
+      running: scheduleRunning
+    });
+  });
 
-async function runScheduledForecast() {
-  const targetDate = getTomorrowDate();
-  console.log(`\n${'─'.repeat(50)}`);
-  console.log(`⏰ Scheduled forecast running at ${new Date().toLocaleTimeString()}`);
-  console.log(`${'─'.repeat(50)}`);
+  app.post('/api/schedule', (req, res) => {
+    const nextSchedule = validateScheduleConfig({
+      enabled: req.body?.enabled ?? scheduleConfig.enabled,
+      intervalHours: req.body?.intervalHours ?? scheduleConfig.intervalHours,
+      locations: req.body?.locations ?? scheduleConfig.locations
+    });
 
-  for (const locId of scheduleConfig.locations) {
-    const loc = getLocation(locId);
-    try {
-      const raw = await getCurrentAndForecast(loc.lat, loc.lon);
-      const summary = summarizeWeatherData(raw);
-      const result = await runSwarm(summary, loc.name, targetDate, { lat: loc.lat, lon: loc.lon });
-      result.weather = summary;
-      saveForecast(result);
-      console.log(`  ✅ ${loc.name}: High ${result.consensus?.consensus?.high_temp}°F`);
-    } catch (err) {
-      console.error(`  ❌ ${loc.name}: ${err.message}`);
+    scheduleConfig = saveScheduleConfig(nextSchedule);
+    restartScheduler({ runNow: scheduleConfig.enabled });
+    res.json({ ok: true, ...scheduleConfig, active: Boolean(scheduledInterval) });
+  });
+
+  app.get('/api/config', (req, res) => {
+    res.json({
+      ok: true,
+      location: config.weather.locationName,
+      lat: config.weather.latitude,
+      lon: config.weather.longitude,
+      provider: config.llm.provider,
+      agentCount: 5,
+      uptime: Math.round(process.uptime()),
+      version: config.version,
+      adminProtected: config.admin.enabled
+    });
+  });
+
+  app.get('/api/status', (req, res) => {
+    res.json(buildReadinessSnapshot());
+  });
+
+  app.get('/api/ready', (req, res) => {
+    const readiness = buildReadinessSnapshot();
+    res.status(readiness.ready ? 200 : 503).json(readiness);
+  });
+
+  setupSSE(app, async (latitude, longitude, options = {}) => {
+    const raw = await getCurrentAndForecast(latitude, longitude, options);
+    return summarizeWeatherData(raw);
+  });
+
+  app.use((req, res) => {
+    res.status(404).json({ ok: false, error: 'Route not found.' });
+  });
+
+  app.use((error, req, res, next) => {
+    void next;
+    const status = error instanceof HttpError ? error.status : 500;
+    const response = {
+      ok: false,
+      error: error instanceof Error ? error.message : 'Unexpected server error.',
+      code: error instanceof HttpError ? error.code : 'internal_error'
+    };
+    if (error instanceof HttpError && error.details) {
+      response.details = error.details;
     }
-  }
-
-  // Auto-record yesterday's outcome and score reputation
-  try {
-    const yesterday = new Date();
-    yesterday.setDate(yesterday.getDate() - 1);
-    const yDate = localDateStr(yesterday);
-    const loc = getLocation(scheduleConfig.locations[0]);
-    const raw = await getCurrentAndForecast(loc.lat, loc.lon);
-    const summary = summarizeWeatherData(raw);
-    const yData = summary.pastDays.find(d => d.date === yDate);
-    if (yData) {
-      saveOutcome(yDate, {
-        high_temp: yData.high, low_temp: yData.low,
-        condition: yData.condition, precip_sum: yData.precipSum, wind_max: yData.windMax
-      });
-      const pastForecasts = loadForecastsForDate(yDate);
-      for (const f of pastForecasts) {
-        batchUpdateReputation(f, { high: yData.high, low: yData.low, precip: yData.precipSum, windMax: yData.windMax });
-      }
-      console.log(`  📊 Auto-scored ${pastForecasts.length} forecasts for ${yDate}`);
+    if (!(error instanceof HttpError)) {
+      console.error(`[${req.id}]`, error);
     }
-  } catch { /* outcome recording is best-effort */ }
+    res.status(status).json(response);
+  });
+
+  return app;
 }
 
-// API: Schedule management
-app.get('/api/schedule', (req, res) => {
-  res.json({ ok: true, ...scheduleConfig, nextRun: scheduledInterval ? 'active' : 'stopped' });
-});
+export function startServer() {
+  restartScheduler({ runNow: scheduleConfig.enabled });
+  const app = createApp();
+  const server = app.listen(config.server.port, config.server.host, () => {
+    console.log(`SwarmCast ${config.version} listening on http://${config.server.host}:${config.server.port}`);
+    for (const warning of config.warnings) {
+      console.warn(`Warning: ${warning}`);
+    }
+  });
 
-app.post('/api/schedule', (req, res) => {
-  const { enabled, intervalHours, locations } = req.body;
+  server.requestTimeout = config.server.requestTimeoutMs;
+  server.keepAliveTimeout = config.server.keepAliveTimeoutMs;
+  server.headersTimeout = config.server.headersTimeoutMs;
+  attachShutdownHandlers(server);
+  return server;
+}
 
-  if (enabled !== undefined) scheduleConfig.enabled = enabled;
-  if (intervalHours) scheduleConfig.intervalHours = Math.max(1, Math.min(24, intervalHours));
-  if (locations && Array.isArray(locations)) scheduleConfig.locations = locations;
+function handleAsync(handler) {
+  return (req, res, next) => {
+    Promise.resolve(handler(req, res, next)).catch(next);
+  };
+}
 
-  // Clear existing interval
+function assignRequestId(req, res, next) {
+  requestSequence += 1;
+  req.id = `req_${Date.now().toString(36)}_${requestSequence.toString(36)}`;
+  res.setHeader('X-Request-Id', req.id);
+  next();
+}
+
+function applySecurityHeaders(req, res, next) {
+  void req;
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'DENY');
+  res.setHeader('Referrer-Policy', 'same-origin');
+  res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
+  res.setHeader('Cross-Origin-Resource-Policy', 'same-origin');
+  if (config.nodeEnv === 'production') {
+    res.setHeader('Strict-Transport-Security', 'max-age=63072000; includeSubDomains');
+  }
+  next();
+}
+
+function logRequests(req, res, next) {
+  const start = Date.now();
+  res.on('finish', () => {
+    const durationMs = Date.now() - start;
+    console.log(`[${req.id}] ${req.method} ${req.originalUrl} ${res.statusCode} ${durationMs}ms`);
+  });
+  next();
+}
+
+function createRateLimiter({ windowMs, maxRequests, bucket }) {
+  const state = new Map();
+  return (req, res, next) => {
+    const now = Date.now();
+    const key = `${bucket}:${req.ip || req.socket.remoteAddress || 'unknown'}`;
+    const entry = state.get(key);
+
+    if (!entry || entry.resetAt <= now) {
+      state.set(key, { count: 1, resetAt: now + windowMs });
+      res.setHeader('X-RateLimit-Limit', String(maxRequests));
+      res.setHeader('X-RateLimit-Remaining', String(maxRequests - 1));
+      return next();
+    }
+
+    if (entry.count >= maxRequests) {
+      res.setHeader('Retry-After', String(Math.ceil((entry.resetAt - now) / 1000)));
+      return next(new HttpError(429, 'Rate limit exceeded.'));
+    }
+
+    entry.count += 1;
+    res.setHeader('X-RateLimit-Limit', String(maxRequests));
+    res.setHeader('X-RateLimit-Remaining', String(Math.max(0, maxRequests - entry.count)));
+    next();
+  };
+}
+
+function requireAdminIfConfigured(req, res, next) {
+  void res;
+  if (req.method === 'GET' || req.method === 'HEAD' || req.method === 'OPTIONS') {
+    next();
+    return;
+  }
+  if (!config.admin.enabled) {
+    next();
+    return;
+  }
+  const key = req.get(ADMIN_HEADER);
+  if (key !== config.admin.apiKey) {
+    next(new HttpError(401, `Missing or invalid ${ADMIN_HEADER} header.`));
+    return;
+  }
+  next();
+}
+
+function getRequestedCoordinates(req) {
+  return {
+    latitude: getNumberQuery(req.query.lat, {
+      name: 'lat',
+      defaultValue: config.weather.latitude,
+      min: -90,
+      max: 90
+    }),
+    longitude: getNumberQuery(req.query.lon, {
+      name: 'lon',
+      defaultValue: config.weather.longitude,
+      min: -180,
+      max: 180
+    })
+  };
+}
+
+function getDisplayLocation(req) {
+  const raw = cleanString(req.query.location);
+  if (!raw) {
+    return config.weather.locationName;
+  }
+  const knownLocation = getLocation(raw);
+  return knownLocation?.name || sanitizeString(raw, 'location', 100);
+}
+
+function getLocationFromQuery(value) {
+  const locationId = cleanString(value);
+  if (!locationId) {
+    throw new HttpError(400, 'Location is required.');
+  }
+  const location = getLocation(locationId);
+  if (!location) {
+    throw new HttpError(400, `Unknown location "${locationId}".`);
+  }
+  return location;
+}
+
+function getRequestedDate(value, defaultValue, options = {}) {
+  const date = cleanString(value) || defaultValue;
+  if (!date) {
+    if (options.required) {
+      throw new HttpError(400, `${options.label || 'date'} is required.`);
+    }
+    return null;
+  }
+  if (!/^\d{4}-\d{2}-\d{2}$/u.test(date)) {
+    throw new HttpError(400, `${options.label || 'date'} must be in YYYY-MM-DD format.`);
+  }
+  return date;
+}
+
+function getBooleanQuery(value, defaultValue = false) {
+  if (value == null || value === '') {
+    return defaultValue;
+  }
+  const normalized = cleanString(value).toLowerCase();
+  if (['1', 'true', 'yes', 'on'].includes(normalized)) {
+    return true;
+  }
+  if (['0', 'false', 'no', 'off'].includes(normalized)) {
+    return false;
+  }
+  throw new HttpError(400, `Invalid boolean value "${value}".`);
+}
+
+function getIntegerQuery(value, { name, defaultValue, min, max }) {
+  if (value == null || value === '') {
+    return defaultValue;
+  }
+  const parsed = Number.parseInt(String(value), 10);
+  if (!Number.isInteger(parsed)) {
+    throw new HttpError(400, `${name} must be an integer.`);
+  }
+  if (parsed < min || parsed > max) {
+    throw new HttpError(400, `${name} must be between ${min} and ${max}.`);
+  }
+  return parsed;
+}
+
+function getNumberQuery(value, { name, defaultValue, min, max }) {
+  if (value == null || value === '') {
+    return defaultValue;
+  }
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) {
+    throw new HttpError(400, `${name} must be numeric.`);
+  }
+  if (parsed < min || parsed > max) {
+    throw new HttpError(400, `${name} must be between ${min} and ${max}.`);
+  }
+  return parsed;
+}
+
+function normalizeOutcomePayload(actual) {
+  if (!actual || typeof actual !== 'object' || Array.isArray(actual)) {
+    throw new HttpError(400, 'actual must be an object.');
+  }
+
+  return {
+    high_temp: requireFiniteNumber(actual.high_temp, 'actual.high_temp'),
+    low_temp: requireFiniteNumber(actual.low_temp, 'actual.low_temp'),
+    condition: sanitizeString(actual.condition ?? 'Unknown', 'actual.condition', 120),
+    precip_sum: optionalFiniteNumber(actual.precip_sum, 'actual.precip_sum', 0),
+    wind_max: optionalFiniteNumber(actual.wind_max, 'actual.wind_max', 0)
+  };
+}
+
+function requireFiniteNumber(value, name) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) {
+    throw new HttpError(400, `${name} must be numeric.`);
+  }
+  return parsed;
+}
+
+function optionalFiniteNumber(value, name, defaultValue = null) {
+  if (value == null || value === '') {
+    return defaultValue;
+  }
+  return requireFiniteNumber(value, name);
+}
+
+function sanitizeString(value, name, maxLength) {
+  const stringValue = cleanString(value);
+  if (!stringValue) {
+    throw new HttpError(400, `${name} must not be empty.`);
+  }
+  if (stringValue.length > maxLength) {
+    throw new HttpError(400, `${name} must be at most ${maxLength} characters.`);
+  }
+  return stringValue;
+}
+
+function validateScheduleConfig(schedule) {
+  const locations = Array.isArray(schedule.locations)
+    ? [...new Set(schedule.locations.map((value) => sanitizeString(value, 'locations[]', 100)))]
+    : [];
+  if (locations.length === 0) {
+    throw new HttpError(400, 'locations must contain at least one known location id.');
+  }
+  for (const locationId of locations) {
+    if (!getLocation(locationId)) {
+      throw new HttpError(400, `Unknown location "${locationId}" in schedule config.`);
+    }
+  }
+
+  return {
+    enabled: Boolean(schedule.enabled),
+    intervalHours: Number.isFinite(Number(schedule.intervalHours))
+      ? Math.max(1, Math.min(24, Math.round(Number(schedule.intervalHours))))
+      : 6,
+    locations
+  };
+}
+
+function loadInitialScheduleConfig() {
+  try {
+    return validateScheduleConfig(loadScheduleConfig());
+  } catch (error) {
+    console.warn('Falling back to default schedule config:', error instanceof Error ? error.message : String(error));
+    return {
+      enabled: false,
+      intervalHours: 6,
+      locations: [LOCATIONS[0]?.id || 'mt-sterling']
+    };
+  }
+}
+
+function restartScheduler({ runNow = false } = {}) {
   if (scheduledInterval) {
     clearInterval(scheduledInterval);
     scheduledInterval = null;
   }
 
-  // Start new interval if enabled
-  if (scheduleConfig.enabled) {
-    const ms = scheduleConfig.intervalHours * 60 * 60 * 1000;
-    scheduledInterval = setInterval(runScheduledForecast, ms);
-    // Run immediately on enable
-    runScheduledForecast();
-    console.log(`⏰ Scheduled: every ${scheduleConfig.intervalHours}h for ${scheduleConfig.locations.join(', ')}`);
+  if (!scheduleConfig.enabled) {
+    return;
   }
 
-  res.json({ ok: true, ...scheduleConfig });
-});
+  const intervalMs = scheduleConfig.intervalHours * 60 * 60 * 1000;
+  scheduledInterval = setInterval(() => {
+    void runScheduledForecast('interval');
+  }, intervalMs);
 
-// API: Server config
-app.get('/api/config', (req, res) => {
-  res.json({
-    ok: true,
-    location: LOCATION,
-    lat: LAT,
-    lon: LON,
-    provider: process.env.LLM_PROVIDER || 'openai',
-    agentCount: 5,
-    uptime: Math.round(process.uptime()),
-    version: '0.2.0'
-  });
-});
+  if (runNow) {
+    void runScheduledForecast('startup');
+  }
+}
 
-// API: Health check with uptime and memory
-app.get('/api/status', (req, res) => {
-  const mem = process.memoryUsage();
-  const forecasts = loadForecasts(1);
-  res.json({
+async function runScheduledForecast(trigger) {
+  if (scheduleRunning) {
+    console.warn(`Skipping scheduled run (${trigger}) because another run is still in progress.`);
+    return;
+  }
+
+  scheduleRunning = true;
+  try {
+    const targetDate = getTomorrowDate();
+    const locations = scheduleConfig.locations.map((locationId) => getLocation(locationId)).filter(Boolean);
+    for (const location of locations) {
+      const raw = await getCurrentAndForecast(location.lat, location.lon);
+      const summary = summarizeWeatherData(raw);
+      const forecast = await runSwarm(summary, location.name, targetDate, {
+        lat: location.lat,
+        lon: location.lon
+      });
+      forecast.weather = summary;
+      saveForecast(forecast);
+      latestForecast = forecast;
+    }
+
+    const yesterday = localDateStr(addDays(new Date(), -1));
+    const firstLocation = locations[0];
+    if (firstLocation) {
+      const raw = await getCurrentAndForecast(firstLocation.lat, firstLocation.lon);
+      const summary = summarizeWeatherData(raw);
+      const actualDay = summary.pastDays.find((day) => day.date === yesterday);
+      if (actualDay) {
+        saveOutcome(yesterday, {
+          high_temp: actualDay.high,
+          low_temp: actualDay.low,
+          condition: actualDay.condition,
+          precip_sum: actualDay.precipSum,
+          wind_max: actualDay.windMax
+        });
+        for (const forecast of loadForecastsForDate(yesterday)) {
+          batchUpdateReputation(forecast, {
+            high: actualDay.high,
+            low: actualDay.low,
+            precip: actualDay.precipSum,
+            windMax: actualDay.windMax
+          });
+        }
+      }
+    }
+  } catch (error) {
+    console.error('Scheduled forecast failed:', error);
+  } finally {
+    scheduleRunning = false;
+  }
+}
+
+function buildReadinessSnapshot() {
+  const storage = getStorageStatus();
+  const issues = [];
+  if (!storage.ok) {
+    issues.push(storage.error || 'Storage is not writable.');
+  }
+  if (config.llm.requireKey && !config.llm.hasConfiguredKey) {
+    issues.push(`Configured provider "${config.llm.provider}" is missing an API key.`);
+  }
+
+  const memory = process.memoryUsage();
+  return {
     ok: true,
-    status: 'healthy',
+    ready: issues.length === 0,
+    status: issues.length === 0 ? 'ready' : 'degraded',
+    version: config.version,
+    nodeEnv: config.nodeEnv,
     uptime: Math.round(process.uptime()),
+    provider: config.llm.provider,
+    lastForecast: latestForecast?.timestamp || loadForecasts(1)[0]?.timestamp || null,
     memory: {
-      heapUsed: Math.round(mem.heapUsed / 1024 / 1024) + ' MB',
-      heapTotal: Math.round(mem.heapTotal / 1024 / 1024) + ' MB',
-      rss: Math.round(mem.rss / 1024 / 1024) + ' MB'
+      heapUsedMb: Math.round(memory.heapUsed / 1024 / 1024),
+      heapTotalMb: Math.round(memory.heapTotal / 1024 / 1024),
+      rssMb: Math.round(memory.rss / 1024 / 1024)
     },
-    lastForecast: forecasts[0]?.timestamp || null,
-    schedule: scheduleConfig,
-    provider: process.env.LLM_PROVIDER || 'openai'
+    storage,
+    schedule: {
+      ...scheduleConfig,
+      active: Boolean(scheduledInterval),
+      running: scheduleRunning
+    },
+    warnings: config.warnings,
+    issues
+  };
+}
+
+function attachShutdownHandlers(server) {
+  let shuttingDown = false;
+
+  const shutdown = (signal) => {
+    if (shuttingDown) {
+      return;
+    }
+    shuttingDown = true;
+    console.log(`${signal} received, shutting down.`);
+    if (scheduledInterval) {
+      clearInterval(scheduledInterval);
+      scheduledInterval = null;
+    }
+
+    const forceExit = setTimeout(() => {
+      console.error('Graceful shutdown timed out; forcing exit.');
+      process.exit(1);
+    }, config.server.shutdownTimeoutMs);
+    forceExit.unref();
+
+    server.close((error) => {
+      clearTimeout(forceExit);
+      if (error) {
+        console.error('Shutdown failed:', error);
+        process.exit(1);
+        return;
+      }
+      process.exit(0);
+    });
+  };
+
+  process.on('SIGINT', () => shutdown('SIGINT'));
+  process.on('SIGTERM', () => shutdown('SIGTERM'));
+  process.on('unhandledRejection', (error) => {
+    console.error('Unhandled rejection:', error);
   });
-});
+}
 
 function getTomorrowDate() {
-  const d = new Date();
-  d.setDate(d.getDate() + 1);
-  return localDateStr(d);
+  return localDateStr(addDays(new Date(), 1));
 }
 
-function localDateStr(d) {
-  return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+function addDays(date, days) {
+  const next = new Date(date);
+  next.setDate(next.getDate() + days);
+  return next;
 }
 
-app.listen(PORT, () => {
-  console.log(`
-╔══════════════════════════════════════════════════╗
-║              🐝 SwarmCast v0.2.0                ║
-║     Multi-Agent Weather Prediction Swarm        ║
-╠══════════════════════════════════════════════════╣
-║  Dashboard:  http://localhost:${PORT}             ║
-║  Location:   ${LOCATION.padEnd(35)}║
-║  Provider:   ${(process.env.LLM_PROVIDER || 'openai').padEnd(35)}║
-║  Storage:    data/forecasts/                    ║
-╚══════════════════════════════════════════════════╝
-  `);
-});
+function localDateStr(date) {
+  return [
+    date.getFullYear(),
+    String(date.getMonth() + 1).padStart(2, '0'),
+    String(date.getDate()).padStart(2, '0')
+  ].join('-');
+}
+
+function cleanString(value) {
+  return value == null ? '' : String(value).trim();
+}
+
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  startServer();
+}

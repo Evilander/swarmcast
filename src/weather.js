@@ -1,9 +1,12 @@
-// Fetches real weather data from Open-Meteo (no API key needed)
+import { fetchWithTimeout } from './fetch-utils.js';
 
 const BASE = 'https://api.open-meteo.com/v1';
+const NWS_HEADERS = Object.freeze({
+  'User-Agent': `SwarmCast/${process.env.npm_package_version || '0.3.0'} (weather-forecast-app)`
+});
 
 // Fetch severe weather / convective parameters
-export async function getSevereParams(lat, lon) {
+export async function getSevereParams(lat, lon, options = {}) {
   const params = new URLSearchParams({
     latitude: lat,
     longitude: lon,
@@ -18,7 +21,7 @@ export async function getSevereParams(lat, lon) {
     forecast_days: 3
   });
 
-  const res = await fetch(`${BASE}/forecast?${params}`);
+  const res = await fetchWithTimeout(`${BASE}/forecast?${params}`, options);
   if (!res.ok) return null;
   const data = await res.json();
   if (!data.hourly) return null;
@@ -75,10 +78,14 @@ function assessSeverity(maxCape, maxGusts, maxPrecipProb, codes) {
 }
 
 // Fetch active NWS alerts for a location
-export async function getNWSAlerts(lat, lon) {
+export async function getNWSAlerts(lat, lon, options = {}) {
   try {
-    const res = await fetch(`https://api.weather.gov/alerts/active?point=${lat},${lon}`, {
-      headers: { 'User-Agent': 'SwarmCast/0.1.0 (weather-forecast-app)' }
+    const res = await fetchWithTimeout(`https://api.weather.gov/alerts/active?point=${lat},${lon}`, {
+      ...options,
+      headers: {
+        ...NWS_HEADERS,
+        ...(options.headers || {})
+      }
     });
     if (!res.ok) return [];
     const data = await res.json();
@@ -99,7 +106,7 @@ export async function getNWSAlerts(lat, lon) {
   }
 }
 
-export async function getCurrentAndForecast(lat, lon) {
+export async function getCurrentAndForecast(lat, lon, options = {}) {
   const params = new URLSearchParams({
     latitude: lat,
     longitude: lon,
@@ -130,12 +137,12 @@ export async function getCurrentAndForecast(lat, lon) {
     past_days: 3
   });
 
-  const res = await fetch(`${BASE}/forecast?${params}`);
+  const res = await fetchWithTimeout(`${BASE}/forecast?${params}`, options);
   if (!res.ok) throw new Error(`Open-Meteo error: ${res.status}`);
   return res.json();
 }
 
-export async function getHistorical(lat, lon, startDate, endDate) {
+export async function getHistorical(lat, lon, startDate, endDate, options = {}) {
   const params = new URLSearchParams({
     latitude: lat,
     longitude: lon,
@@ -151,7 +158,7 @@ export async function getHistorical(lat, lon, startDate, endDate) {
     timezone: 'America/Chicago'
   });
 
-  const res = await fetch(`${BASE}/archive?${params}`);
+  const res = await fetchWithTimeout(`${BASE}/archive?${params}`, options);
   if (!res.ok) throw new Error(`Open-Meteo archive error: ${res.status}`);
   return res.json();
 }

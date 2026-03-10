@@ -2,6 +2,7 @@
 
 import { AGENTS, buildAgentPrompt, buildConsensusPrompt } from './agents.js';
 import { callLLM } from './llm.js';
+import { validateAgentResult, validateConsensusResult } from './llm-schemas.js';
 import { getLocalForecasts } from './local-forecasts.js';
 import { getAgentWeights } from './reputation.js';
 import { getSevereParams } from './weather.js';
@@ -40,7 +41,7 @@ export async function runSwarm(weatherSummary, locationName, targetDate, locatio
 
     try {
       const prompt = buildAgentPrompt(agent, weatherSummary, locationName, targetDate, nwsForecast, severeData);
-      const result = await callLLM(prompt);
+      const result = validateAgentResult(await callLLM(prompt));
       const elapsed = ((Date.now() - agentStart) / 1000).toFixed(1);
       console.log(`  ${agent.emoji} ${agent.name} done (${elapsed}s) — confidence: ${result.confidence}%`);
 
@@ -95,7 +96,7 @@ export async function runSwarm(weatherSummary, locationName, targetDate, locatio
   } else {
     const agentWeights = getAgentWeights();
     const consensusPrompt = buildConsensusPrompt(successful, locationName, targetDate, agentWeights);
-    consensus = await callLLM(consensusPrompt);
+    consensus = validateConsensusResult(await callLLM(consensusPrompt));
   }
 
   const totalElapsed = ((Date.now() - startTime) / 1000).toFixed(1);

@@ -1,20 +1,17 @@
 // Agent Reputation System — tracks accuracy history and rewards agents
 // Better agents get more weight in future consensus building
 
-import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'fs';
-import { join, dirname } from 'path';
-import { fileURLToPath } from 'url';
+import { readFileSync } from 'fs';
+import { join } from 'path';
+import { config } from './config.js';
+import { ensureDir, writeJsonAtomic } from './storage.js';
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
-const DATA_DIR = join(__dirname, '..', 'data');
+const DATA_DIR = config.dataDir;
 const REP_FILE = join(DATA_DIR, 'reputation.json');
-
-function ensureDir() {
-  if (!existsSync(DATA_DIR)) mkdirSync(DATA_DIR, { recursive: true });
-}
 
 function loadReputation() {
   try {
+    ensureDir(DATA_DIR);
     return JSON.parse(readFileSync(REP_FILE, 'utf-8'));
   } catch {
     return {};
@@ -22,8 +19,8 @@ function loadReputation() {
 }
 
 function saveReputation(rep) {
-  ensureDir();
-  writeFileSync(REP_FILE, JSON.stringify(rep, null, 2));
+  ensureDir(DATA_DIR);
+  writeJsonAtomic(REP_FILE, rep);
 }
 
 // Score an agent based on how close their prediction was to actual

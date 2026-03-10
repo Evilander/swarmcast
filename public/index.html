@@ -43,15 +43,16 @@
       z-index: 0;
     }
 
-    .app { position: relative; z-index: 1; max-width: 1400px; margin: 0 auto; padding: 24px; }
+    .app { position: relative; z-index: 1; max-width: none; margin: 0; padding: 16px 24px 0; display: flex; flex-direction: column; height: 100dvh; overflow: hidden; }
 
     header {
       display: flex;
       align-items: center;
       justify-content: space-between;
-      margin-bottom: 32px;
-      padding-bottom: 20px;
+      margin-bottom: 12px;
+      padding-bottom: 12px;
       border-bottom: 1px solid var(--border);
+      flex-shrink: 0;
     }
 
     .logo { display: flex; align-items: center; gap: 12px; }
@@ -644,8 +645,8 @@
 
     .status-bar {
       display: flex; align-items: center; justify-content: space-between;
-      padding: 12px 0; font-size: 12px; color: var(--text-dim);
-      border-top: 1px solid var(--border); margin-top: 32px;
+      padding: 8px 0; font-size: 12px; color: var(--text-dim);
+      border-top: 1px solid var(--border); flex-shrink: 0;
     }
 
     .status-provider { display: flex; align-items: center; gap: 6px; }
@@ -838,6 +839,231 @@
     }
     .btn-sm:hover { border-color: var(--accent); color: var(--text); }
     .btn-sm:disabled { opacity: 0.4; cursor: not-allowed; }
+
+    /* ========================================
+       COMMAND CENTER GRID LAYOUT
+       ======================================== */
+    .swarmcast-grid {
+      display: grid;
+      flex: 1;
+      gap: 14px;
+      grid-template-columns: 300px 1fr 360px;
+      grid-template-rows: 1fr;
+      grid-template-areas: "sidebar center right";
+      overflow: hidden;
+      min-height: 0;
+    }
+
+    .panel {
+      overflow-y: auto;
+      overscroll-behavior: contain;
+      scrollbar-width: thin;
+      scrollbar-color: var(--border) transparent;
+      padding: 16px;
+      min-height: 0;
+    }
+
+    .panel::-webkit-scrollbar { width: 6px; }
+    .panel::-webkit-scrollbar-track { background: transparent; }
+    .panel::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+    .panel-sidebar { grid-area: sidebar; }
+    .panel-center { grid-area: center; }
+    .panel-right { grid-area: right; padding: 0; }
+
+    .panel-section { margin-bottom: 16px; }
+    .panel-section:last-child { margin-bottom: 0; }
+
+    /* Sidebar conditions — narrow 2-col grid */
+    .panel-sidebar .conditions-bar {
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+    }
+    .panel-sidebar .condition-card { padding: 10px; }
+    .panel-sidebar .condition-value { font-size: 18px; }
+
+    /* Agent grid — single column in right panel */
+    .panel-right .main-grid {
+      grid-template-columns: 1fr;
+      gap: 12px;
+      margin-bottom: 0;
+    }
+
+    /* Consensus full-width in center */
+    .panel-center .consensus-panel { margin-bottom: 16px; }
+
+    /* Tablet: 2 columns */
+    @media (max-width: 1200px) {
+      .swarmcast-grid {
+        grid-template-columns: 1fr 360px;
+        grid-template-rows: auto 1fr;
+        grid-template-areas:
+          "sidebar right"
+          "center  right";
+      }
+      .panel-sidebar { max-height: 260px; padding: 12px; }
+    }
+
+    /* Mobile: single column + bottom nav */
+    @media (max-width: 768px) {
+      header { margin-bottom: 0 !important; padding-bottom: 10px !important; }
+      .header-right { gap: 6px; }
+      .mode-toggle { display: none; }
+      #allLocBtn { display: none !important; }
+
+      .swarmcast-grid {
+        padding: 0;
+        gap: 0;
+        grid-template-columns: 1fr;
+        grid-template-rows: 1fr;
+        grid-template-areas: "active-view";
+      }
+      .panel { display: none; border-radius: 0; }
+      .panel.is-active-mobile { display: block; grid-area: active-view; }
+      .bottom-nav { display: flex !important; }
+      .status-bar { display: none; }
+    }
+
+    /* ========================================
+       TAB NAVIGATION (right panel)
+       ======================================== */
+    .tab-list {
+      display: flex;
+      border-bottom: 1px solid var(--border);
+      background: var(--surface);
+      position: sticky;
+      top: 0;
+      z-index: 10;
+    }
+
+    .tab-btn {
+      flex: 1;
+      background: transparent;
+      border: none;
+      color: var(--text-dim);
+      padding: 12px 8px;
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      cursor: pointer;
+      border-bottom: 2px solid transparent;
+      transition: color 0.2s, border-color 0.2s;
+    }
+
+    .tab-btn:hover { color: var(--text); }
+    .tab-btn[aria-selected="true"] {
+      color: var(--accent);
+      border-bottom-color: var(--accent);
+    }
+
+    .tab-panel { padding: 16px; }
+    .tab-panel[hidden] { display: none; }
+
+    /* ========================================
+       BOTTOM NAV (mobile only)
+       ======================================== */
+    .bottom-nav {
+      display: none;
+      position: fixed;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      height: 52px;
+      background: var(--surface);
+      border-top: 1px solid var(--border);
+      z-index: 50;
+      padding-bottom: env(safe-area-inset-bottom);
+    }
+
+    .bottom-nav-btn {
+      flex: 1;
+      background: transparent;
+      border: none;
+      color: var(--text-dim);
+      font-size: 10px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      cursor: pointer;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 2px;
+      transition: color 0.2s;
+    }
+
+    .bottom-nav-btn.active { color: var(--accent); }
+    .bottom-nav-btn .nav-icon { font-size: 18px; }
+
+    /* ========================================
+       THREAT LEVEL STATE MACHINE
+       ======================================== */
+    body[data-threat-level="elevated"] {
+      --bg: #1a1612;
+      --surface: #261f18;
+      --surface-2: #2e2519;
+      --accent: #f59e0b;
+      --accent-glow: rgba(245, 158, 11, 0.15);
+    }
+
+    body[data-threat-level="severe"] {
+      --bg: #1a0e0e;
+      --surface: #2a1414;
+      --surface-2: #331818;
+      --accent: #ef4444;
+      --accent-glow: rgba(239, 68, 68, 0.2);
+    }
+
+    body[data-threat-level="severe"] #capeSection {
+      order: -1;
+      border-left: 4px solid var(--accent);
+      border-radius: var(--radius);
+    }
+
+    @media (max-width: 768px) {
+      body[data-threat-level="severe"] .bottom-nav { display: none !important; }
+      body[data-threat-level="severe"] .swarmcast-grid { height: calc(100dvh - 52px); }
+      body[data-threat-level="severe"] .panel { display: none !important; }
+      body[data-threat-level="severe"] .panel-center {
+        display: block !important;
+        grid-area: active-view;
+      }
+    }
+
+    /* ========================================
+       AGENT PERSONALITY
+       ======================================== */
+    .agent-card[data-agent="statistician"] .agent-reasoning {
+      font-family: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace;
+      font-size: 12px;
+      line-height: 1.7;
+    }
+
+    .agent-card[data-agent="contrarian"] {
+      border-color: rgba(239, 68, 68, 0.25);
+    }
+    .agent-card[data-agent="contrarian"] .agent-dissent {
+      font-weight: 600;
+      border-left-width: 4px;
+    }
+
+    .agent-card[data-agent="sentinel"].has-threat {
+      background: linear-gradient(135deg, var(--surface) 92%, rgba(239, 68, 68, 0.12));
+    }
+    .agent-card[data-agent="sentinel"]:not(.has-threat) {
+      opacity: 0.65;
+    }
+
+    .agent-card[data-agent="pattern_hunter"] .agent-reasoning {
+      border-left: 2px solid var(--purple);
+      padding-left: 12px;
+    }
+
+    .agent-card[data-agent="local"] .agent-reasoning {
+      font-style: italic;
+    }
   </style>
 </head>
 <body>
@@ -865,49 +1091,98 @@
       </div>
     </header>
 
-    <div id="severeBanner" style="display:none;"></div>
-    <div id="briefPanel" style="display:none;"></div>
-    <div class="conditions-bar" id="conditionsBar"></div>
-
-    <div class="sparkline-section" id="sparklineSection" style="display:none;">
-      <div class="sparkline-header">
-        <div class="sparkline-title">Next 24 Hours</div>
-        <div class="sparkline-subtitle" id="sparklineSubtitle"></div>
+    <div class="swarmcast-grid">
+      <!-- LEFT SIDEBAR: Current conditions + Severe weather + Schedule -->
+      <div class="panel panel-sidebar is-active-mobile" id="panelSidebar">
+        <div class="panel-section">
+          <div class="conditions-bar" id="conditionsBar"></div>
+        </div>
+        <div class="panel-section" id="severeOutlook" style="display:none;"></div>
+        <div class="panel-section" id="capeSection" style="display:none;"></div>
+        <div class="panel-section" id="schedulePanel"></div>
+        <div class="panel-section">
+          <div class="section-title" id="localTitle" style="display:none;">Local Stations</div>
+          <div class="local-panel" id="localPanel" style="display:none;"></div>
+        </div>
       </div>
-      <canvas class="sparkline-canvas" id="sparklineCanvas"></canvas>
-      <div class="sparkline-legend">
-        <span><span class="sparkline-legend-dot" style="background:var(--accent)"></span> Temperature</span>
-        <span><span class="sparkline-legend-dot" style="background:var(--purple)"></span> Precip %</span>
-        <span><span class="sparkline-legend-dot" style="background:rgba(255,255,255,0.2)"></span> Wind</span>
+
+      <!-- CENTER: Alerts + Consensus + Charts + 7-day -->
+      <div class="panel panel-center" id="panelCenter">
+        <div class="panel-section" id="severeBanner" style="display:none;"></div>
+        <div class="panel-section" id="consensusContainer"></div>
+        <div class="panel-section" id="tempComparisonContainer"></div>
+        <div class="panel-section" id="briefPanel" style="display:none;"></div>
+        <div class="panel-section">
+          <div class="sparkline-section" id="sparklineSection" style="display:none;">
+            <div class="sparkline-header">
+              <div class="sparkline-title">Next 24 Hours</div>
+              <div class="sparkline-subtitle" id="sparklineSubtitle"></div>
+            </div>
+            <canvas class="sparkline-canvas" id="sparklineCanvas"></canvas>
+            <div class="sparkline-legend">
+              <span><span class="sparkline-legend-dot" style="background:var(--accent)"></span> Temperature</span>
+              <span><span class="sparkline-legend-dot" style="background:var(--purple)"></span> Precip %</span>
+              <span><span class="sparkline-legend-dot" style="background:rgba(255,255,255,0.2)"></span> Wind</span>
+            </div>
+          </div>
+        </div>
+        <div class="panel-section">
+          <div class="section-title" id="forecastStripTitle" style="display:none;">7-Day Outlook</div>
+          <div class="forecast-strip" id="forecastStrip" style="display:none;"></div>
+        </div>
+      </div>
+
+      <!-- RIGHT: Agents / Debate / History (tabbed) -->
+      <div class="panel panel-right" id="panelRight">
+        <div class="tab-list" role="tablist" aria-label="Agent Views">
+          <button class="tab-btn" role="tab" aria-selected="true" aria-controls="tabAgents" id="tabBtnAgents">Agents</button>
+          <button class="tab-btn" role="tab" aria-selected="false" aria-controls="tabDebate" id="tabBtnDebate">Debate</button>
+          <button class="tab-btn" role="tab" aria-selected="false" aria-controls="tabHistory" id="tabBtnHistory">History</button>
+        </div>
+        <div id="tabAgents" class="tab-panel" role="tabpanel" aria-labelledby="tabBtnAgents">
+          <div class="section-title" id="swarmTitle" style="display:none;">Swarm Analysis</div>
+          <div class="main-grid" id="mainGrid">
+            <div class="empty-state">
+              <div class="empty-icon">&#x1F41D;</div>
+              <div class="empty-title">Ready to swarm</div>
+              <div class="empty-desc">Hit "Run Swarm" to dispatch 5 specialist agents.</div>
+              <button class="btn" onclick="runForecast()">Run First Forecast</button>
+            </div>
+          </div>
+        </div>
+        <div id="tabDebate" class="tab-panel" role="tabpanel" aria-labelledby="tabBtnDebate" hidden>
+          <div id="debateContainer">
+            <div class="empty-state" style="padding:40px 20px;">
+              <div class="empty-icon">&#x1F4AC;</div>
+              <div class="empty-title">No debate yet</div>
+              <div class="empty-desc">Run a forecast to see agents debate their predictions.</div>
+            </div>
+          </div>
+        </div>
+        <div id="tabHistory" class="tab-panel" role="tabpanel" aria-labelledby="tabBtnHistory" hidden>
+          <div class="section-title" id="reputationTitle" style="display:none;">Agent Reputation</div>
+          <div id="reputationPanel" style="display:none;"></div>
+          <div class="section-title" id="accuracyTitle" style="display:none;">Forecast Accuracy</div>
+          <div class="accuracy-panel" id="accuracyPanel" style="display:none;"></div>
+        </div>
       </div>
     </div>
 
-    <div id="severeOutlook" style="display:none;"></div>
-    <div id="capeSection" style="display:none;"></div>
-
-    <div id="schedulePanel"></div>
-
-    <div class="section-title" id="reputationTitle" style="display:none;">Agent Reputation</div>
-    <div id="reputationPanel" style="display:none;"></div>
-
-    <div class="section-title" id="forecastStripTitle" style="display:none;">7-Day Outlook</div>
-    <div class="forecast-strip" id="forecastStrip" style="display:none;"></div>
-
-    <div class="section-title" id="swarmTitle" style="display:none;">Swarm Analysis</div>
-    <div class="main-grid" id="mainGrid">
-      <div class="empty-state">
-        <div class="empty-icon">&#x1F41D;</div>
-        <div class="empty-title">Ready to swarm</div>
-        <div class="empty-desc">Hit "Run Swarm" to dispatch 5 specialist agents. They'll analyze current conditions, debate, and converge on a prediction.</div>
-        <button class="btn" onclick="runForecast()">Run First Forecast</button>
-      </div>
-    </div>
-
-    <div class="section-title" id="accuracyTitle" style="display:none;">Forecast Accuracy</div>
-    <div class="accuracy-panel" id="accuracyPanel" style="display:none;"></div>
-
-    <div class="section-title" id="localTitle" style="display:none;">Local Station Comparison</div>
-    <div class="local-panel" id="localPanel" style="display:none;"></div>
+    <!-- Mobile bottom nav -->
+    <nav class="bottom-nav" id="bottomNav">
+      <button class="bottom-nav-btn active" data-panel="panelSidebar" onclick="switchMobileView('panelSidebar')">
+        <span class="nav-icon">&#x1F321;</span>
+        <span>Now</span>
+      </button>
+      <button class="bottom-nav-btn" data-panel="panelCenter" onclick="switchMobileView('panelCenter')">
+        <span class="nav-icon">&#x1F4CA;</span>
+        <span>Forecast</span>
+      </button>
+      <button class="bottom-nav-btn" data-panel="panelRight" onclick="switchMobileView('panelRight')">
+        <span class="nav-icon">&#x1F41D;</span>
+        <span>Agents</span>
+      </button>
+    </nav>
 
     <div class="status-bar">
       <div class="status-provider">
@@ -1267,7 +1542,8 @@
       try {
         const res = await fetch('/api/config');
         config = await res.json();
-        document.getElementById('statusProvider').textContent = config.provider + ' \u2022 ' + config.agentCount + ' agents';
+        const adminSuffix = config.adminProtected ? ' \u2022 admin-protected' : '';
+        document.getElementById('statusProvider').textContent = config.provider + ' \u2022 ' + config.agentCount + ' agents' + adminSuffix;
         const wxRes = await fetch('/api/weather');
         const wx = await wxRes.json();
         if (wx.ok) {
@@ -1454,16 +1730,23 @@
         // Remove status message
         if (grid.contains(statusEl)) grid.removeChild(statusEl);
 
-        // Add temp comparison
+        // Add temp comparison -> center panel
         const successful = streamAgents.filter(a => a.result);
         if (successful.length > 1) {
-          const allTemps = successful.flatMap(a => [a.result.prediction.high_temp, a.result.prediction.low_temp]);
           const tempSpread = Math.max(...successful.map(a => a.result.prediction.high_temp)) - Math.min(...successful.map(a => a.result.prediction.high_temp));
-          grid.appendChild(buildTempComparison(successful, { tempSpread }));
+          const tempContainer = document.getElementById('tempComparisonContainer');
+          if (tempContainer) {
+            tempContainer.replaceChildren();
+            tempContainer.appendChild(buildTempComparison(successful, { tempSpread }));
+          }
         }
 
-        // Add consensus panel
-        grid.appendChild(buildConsensusPanel(streamConsensus));
+        // Add consensus panel -> center panel
+        const consensusContainer = document.getElementById('consensusContainer');
+        if (consensusContainer) {
+          consensusContainer.replaceChildren();
+          consensusContainer.appendChild(buildConsensusPanel(streamConsensus));
+        }
       });
 
       source.addEventListener('debate_response', (e) => {
@@ -1482,10 +1765,14 @@
         // Remove status if still present
         if (grid.contains(statusEl)) grid.removeChild(statusEl);
 
-        // Add debate panel if we got responses
+        // Add debate panel -> debate tab
         if (debateResponses.length > 0) {
           const debatePanel = buildDebatePanel({ elapsed: elapsed, responses: debateResponses });
-          if (debatePanel) grid.appendChild(debatePanel);
+          const debateContainer = document.getElementById('debateContainer');
+          if (debatePanel && debateContainer) {
+            debateContainer.replaceChildren();
+            debateContainer.appendChild(debatePanel);
+          }
         }
       });
 
@@ -1506,6 +1793,13 @@
 
     function buildAgentCard(agent, delay) {
       const card = el('div', { className: 'agent-card fade-in delay-' + delay });
+      card.setAttribute('data-agent', agent.id);
+
+      // Sentinel threat detection for personality CSS
+      const agentSevere = (agent.result?.prediction?.severe_risk || 'none').toLowerCase();
+      if (agent.id === 'sentinel' && agentSevere !== 'none' && agentSevere !== 'low') {
+        card.classList.add('has-threat');
+      }
 
       if (agent.error) {
         const header = el('div', { className: 'agent-header' },
@@ -1582,7 +1876,7 @@
       const maxTemp = Math.max(...allTemps) + 5;
       const range = maxTemp - minTemp;
 
-      const card = el('div', { className: 'agent-card fade-in', style: 'grid-column:1/-1;' });
+      const card = el('div', { className: 'agent-card fade-in' });
       const header = el('div', { className: 'agent-header' },
         el('span', { className: 'agent-name', textContent: 'Temperature Spread' }),
         Object.assign(el('span', { className: 'agent-confidence' }),
@@ -1752,29 +2046,37 @@
 
     function renderForecast(data) {
       const grid = document.getElementById('mainGrid');
+      const consensusContainer = document.getElementById('consensusContainer');
+      const tempContainer = document.getElementById('tempComparisonContainer');
+      const debateContainer = document.getElementById('debateContainer');
+
       grid.replaceChildren();
+      if (consensusContainer) consensusContainer.replaceChildren();
+      if (tempContainer) tempContainer.replaceChildren();
+      if (debateContainer) debateContainer.replaceChildren();
+
       document.getElementById('swarmTitle').style.display = 'flex';
 
-      // Agent cards
+      // Agent cards -> right panel agents tab
       data.agents.forEach((agent, i) => {
         grid.appendChild(buildAgentCard(agent, i + 1));
       });
 
-      // Temperature comparison
+      // Temperature comparison -> center panel
       const successful = data.agents.filter(a => a.result);
-      if (successful.length > 1) {
-        grid.appendChild(buildTempComparison(successful, data.meta));
+      if (successful.length > 1 && tempContainer) {
+        tempContainer.appendChild(buildTempComparison(successful, data.meta));
       }
 
-      // Consensus
-      if (data.consensus) {
-        grid.appendChild(buildConsensusPanel(data.consensus));
+      // Consensus -> center panel
+      if (data.consensus && consensusContainer) {
+        consensusContainer.appendChild(buildConsensusPanel(data.consensus));
       }
 
-      // Debate panel
-      if (data.debate) {
+      // Debate -> debate tab
+      if (data.debate && debateContainer) {
         const debatePanel = buildDebatePanel(data.debate);
-        if (debatePanel) grid.appendChild(debatePanel);
+        if (debatePanel) debateContainer.appendChild(debatePanel);
       }
 
       if (data.weather) {
@@ -2064,6 +2366,9 @@
         const tmrw = data.tomorrow;
         if (!tmrw) return;
 
+        // Update global threat level
+        updateThreatLevel(tmrw);
+
         // Show CAPE chart if we have data
         if (tmrw.capeProfile && tmrw.maxCape > 500) {
           renderCapeChart(tmrw);
@@ -2323,7 +2628,13 @@
 
         const wrap = el('div', { className: 'reputation-panel' });
         const scoreBtn = el('button', { className: 'btn-sm', textContent: 'Score Yesterday' });
+        if (config?.adminProtected) {
+          scoreBtn.disabled = true;
+          scoreBtn.textContent = 'Admin Only';
+          scoreBtn.title = 'Set the admin API key header to score outcomes.';
+        }
         scoreBtn.addEventListener('click', async () => {
+          if (config?.adminProtected) return;
           scoreBtn.disabled = true;
           scoreBtn.textContent = 'Scoring...';
           const result = await autoScoreReputation();
@@ -2463,18 +2774,23 @@
         wrap.appendChild(el('div', { className: 'schedule-label', textContent: 'Auto-Forecast' }));
 
         const toggle = el('div', { className: 'schedule-toggle' + (data.enabled ? ' active' : '') });
-        toggle.addEventListener('click', async () => {
-          const newState = !toggle.classList.contains('active');
-          const hrs = parseInt(document.getElementById('scheduleInterval')?.value) || 6;
-          const locs = Array.from(document.getElementById('scheduleLocs')?.selectedOptions || []).map(o => o.value);
-          await fetch('/api/schedule', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ enabled: newState, intervalHours: hrs, locations: locs.length ? locs : ['mt-sterling'] })
+        if (config?.adminProtected) {
+          toggle.style.opacity = '0.45';
+          toggle.title = 'Read-only in admin-protected mode';
+        } else {
+          toggle.addEventListener('click', async () => {
+            const newState = !toggle.classList.contains('active');
+            const hrs = parseInt(document.getElementById('scheduleInterval')?.value) || 6;
+            const locs = Array.from(document.getElementById('scheduleLocs')?.selectedOptions || []).map(o => o.value);
+            await fetch('/api/schedule', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ enabled: newState, intervalHours: hrs, locations: locs.length ? locs : ['mt-sterling'] })
+            });
+            toggle.classList.toggle('active');
+            statusEl.textContent = newState ? 'Running every ' + hrs + 'h' : 'Stopped';
           });
-          toggle.classList.toggle('active');
-          statusEl.textContent = newState ? 'Running every ' + hrs + 'h' : 'Stopped';
-        });
+        }
         wrap.appendChild(toggle);
 
         const interval = el('select', { className: 'schedule-select', id: 'scheduleInterval' });
@@ -2487,6 +2803,9 @@
 
         const statusEl = el('div', { className: 'schedule-status', textContent: data.enabled ? 'Running every ' + data.intervalHours + 'h' : 'Stopped' });
         wrap.appendChild(statusEl);
+        if (config?.adminProtected) {
+          wrap.appendChild(el('div', { className: 'schedule-status', textContent: 'Changes require the admin API key.', style: 'margin-top:8px;' }));
+        }
 
         panel.appendChild(wrap);
       } catch (e) { /* ignore */ }
@@ -2592,6 +2911,9 @@
 
     // Auto-score reputation (fetch yesterday's actuals)
     async function autoScoreReputation() {
+      if (config?.adminProtected) {
+        return null;
+      }
       try {
         const res = await fetch('/api/outcome/auto', { method: 'POST' });
         const data = await res.json();
@@ -2613,7 +2935,53 @@
     loadBrief();
     loadLocalForecasts();
     loadAccuracy();
-    autoScoreReputation(); // auto-score past forecasts on page load
+    if (!config?.adminProtected) {
+      autoScoreReputation(); // auto-score past forecasts on page load
+    }
+
+    // Tab switching (right panel)
+    document.querySelector('.tab-list')?.addEventListener('click', (e) => {
+      const tab = e.target.closest('[role="tab"]');
+      if (!tab) return;
+
+      const tablist = tab.closest('[role="tablist"]');
+      const container = tab.closest('.panel-right');
+
+      tablist.querySelectorAll('[role="tab"]').forEach(t => t.setAttribute('aria-selected', 'false'));
+      container.querySelectorAll('[role="tabpanel"]').forEach(p => p.hidden = true);
+
+      tab.setAttribute('aria-selected', 'true');
+      const target = document.getElementById(tab.getAttribute('aria-controls'));
+      if (target) target.hidden = false;
+    });
+
+    // Mobile view switching
+    function switchMobileView(panelId) {
+      document.querySelectorAll('.panel').forEach(p => p.classList.remove('is-active-mobile'));
+      document.getElementById(panelId)?.classList.add('is-active-mobile');
+      document.querySelectorAll('.bottom-nav-btn').forEach(b => b.classList.remove('active'));
+      document.querySelector('[data-panel="' + panelId + '"]')?.classList.add('active');
+    }
+
+    // Threat level detection — called by loadSevereWeather
+    function updateThreatLevel(severeData) {
+      if (!severeData) {
+        document.body.removeAttribute('data-threat-level');
+        return;
+      }
+
+      const cape = severeData.maxCape || 0;
+      const gusts = severeData.maxGusts || 0;
+      const level = severeData.severity?.level || 'none';
+
+      if (level === 'high' || level === 'extreme' || cape > 2500 || gusts > 58) {
+        document.body.setAttribute('data-threat-level', 'severe');
+      } else if (level === 'moderate' || level === 'slight' || cape > 1000 || gusts > 40) {
+        document.body.setAttribute('data-threat-level', 'elevated');
+      } else {
+        document.body.removeAttribute('data-threat-level');
+      }
+    }
 
     // Update uptime display periodically
     async function updateUptime() {
