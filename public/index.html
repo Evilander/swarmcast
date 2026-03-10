@@ -1414,6 +1414,7 @@
     let config = {};
     let forecastMode = 'stream';
     let selectedLocation = null;
+    let cachedLocations = [];
     let agentWeightsCache = {};
     let selectedTargetDate = '';
     let forecastStripDays = [];
@@ -1940,6 +1941,51 @@
       updateWeatherMap();
     }
 
+    // Clear forecast panels (consensus, agents, debate) when switching context
+    function clearForecastPanels() {
+      const grid = document.getElementById('mainGrid');
+      const consensusContainer = document.getElementById('consensusContainer');
+      const tempContainer = document.getElementById('tempComparisonContainer');
+      const debateContainer = document.getElementById('debateContainer');
+
+      grid.replaceChildren(
+        el('div', { className: 'empty-state' },
+          el('div', { className: 'empty-icon', textContent: '\uD83D\uDC1D' }),
+          el('div', { className: 'empty-title', textContent: 'Ready to swarm' }),
+          el('div', { className: 'empty-desc', textContent: 'Hit "Run Swarm" to dispatch 5 specialist agents.' }),
+          el('button', { className: 'btn', textContent: 'Run First Forecast' })
+        )
+      );
+      grid.querySelector('.btn')?.addEventListener('click', runForecast);
+
+      if (consensusContainer) consensusContainer.replaceChildren();
+      if (tempContainer) tempContainer.replaceChildren();
+      if (debateContainer) debateContainer.replaceChildren();
+
+      document.getElementById('exportBtn').style.display = 'none';
+      document.getElementById('swarmTitle').style.display = 'none';
+    }
+
+    // Load the most recent forecast matching the currently selected location
+    async function loadLatestForecastForLocation() {
+      try {
+        const res = await fetch('/api/history?limit=20');
+        const hist = await res.json();
+        if (!hist.ok || !hist.forecasts || hist.forecasts.length === 0) return;
+
+        const locName = selectedLocation?.name;
+        const match = locName
+          ? hist.forecasts.find(f => f.location === locName)
+          : hist.forecasts[0];
+
+        if (match) {
+          renderForecast({ ...match, ok: true });
+          document.getElementById('statusTime').textContent =
+            'Last run: ' + new Date(match.timestamp).toLocaleTimeString() + ' for ' + getTargetDateLabel(match.targetDate);
+        }
+      } catch (e) { /* ignore */ }
+    }
+
     async function init() {
       try {
         const res = await fetch('/api/config');
@@ -1961,15 +2007,8 @@
           void loadSevereOutlook();
         }
 
-        // Load latest forecast from history if available
-        const histRes = await fetch('/api/history?limit=1');
-        const hist = await histRes.json();
-        if (hist.ok && hist.forecasts && hist.forecasts.length > 0) {
-          const latest = hist.forecasts[0];
-          renderForecast({ ...latest, ok: true });
-          document.getElementById('statusTime').textContent =
-            'Last run: ' + new Date(latest.timestamp).toLocaleTimeString() + ' for ' + getTargetDateLabel(latest.targetDate);
-        }
+        // Load latest forecast for the default location
+        await loadLatestForecastForLocation();
       } catch (e) {
         document.getElementById('statusProvider').textContent = 'Connection error';
       }
@@ -2719,30 +2758,35 @@
         const res = await fetch('/api/locations');
         const data = await res.json();
         if (!data.ok) return;
+        cachedLocations = data.locations;
         const sel = document.getElementById('locationSelect');
         sel.replaceChildren();
-        for (const loc of data.locations) {
+        for (const loc of cachedLocations) {
           const opt = el('option', { value: loc.id, textContent: loc.name + ' — ' + loc.description });
           sel.appendChild(opt);
         }
-        selectedLocation = data.locations[0];
+        selectedLocation = cachedLocations[0];
         sel.value = selectedLocation.id;
         updateWeatherMap();
       } catch (e) { /* ignore */ }
     }
 
     function switchLocation(locId) {
-      fetch('/api/locations').then(r => r.json()).then(data => {
-        if (!data.ok) return;
-        selectedLocation = data.locations.find(l => l.id === locId) || data.locations[0];
-        // Reload all location-dependent panels
-        loadWeatherForLocation();
-        loadSevereWeather();
-        loadSevereOutlook();
-        loadLocalForecasts();
-        loadBrief();
-        updateWeatherMap();
-      });
+      const loc = cachedLocations.find(l => l.id === locId) || cachedLocations[0];
+      if (!loc) return;
+      selectedLocation = loc;
+
+      // Clear stale forecast panels from previous location
+      clearForecastPanels();
+
+      // Reload all location-dependent data
+      // loadWeatherForLocation already calls severe, outlook, and map
+      loadWeatherForLocation();
+      loadLocalForecasts();
+      loadBrief();
+
+      // Load most recent forecast for this location from history
+      loadLatestForecastForLocation();
     }
 
     function getLocationParams() {
