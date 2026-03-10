@@ -1068,6 +1068,148 @@
     .agent-card[data-agent="local"] .agent-reasoning {
       font-style: italic;
     }
+
+    /* ========================================
+       HOURLY FORECAST TIMELINE
+       ======================================== */
+    .hourly-section {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 20px;
+      margin-bottom: 28px;
+    }
+    .hourly-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 14px;
+    }
+    .hourly-title { font-size: 14px; font-weight: 600; display: flex; align-items: center; gap: 8px; }
+    .hourly-subtitle { font-size: 11px; color: var(--text-dim); }
+    .hourly-scroll {
+      display: flex;
+      gap: 2px;
+      overflow-x: auto;
+      scroll-snap-type: x mandatory;
+      scrollbar-width: thin;
+      scrollbar-color: var(--border) transparent;
+      padding-bottom: 8px;
+    }
+    .hourly-scroll::-webkit-scrollbar { height: 4px; }
+    .hourly-scroll::-webkit-scrollbar-track { background: transparent; }
+    .hourly-scroll::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+    .hourly-item {
+      flex: 0 0 62px;
+      text-align: center;
+      padding: 10px 6px 8px;
+      border-radius: 8px;
+      background: var(--surface-2);
+      scroll-snap-align: start;
+      transition: all 0.2s;
+      position: relative;
+    }
+    .hourly-item:hover { background: var(--border); }
+    .hourly-item.is-now {
+      border: 1px solid var(--accent);
+      background: rgba(56, 189, 248, 0.08);
+    }
+    .hourly-time {
+      font-size: 10px; color: var(--text-dim); font-weight: 600;
+      text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px;
+    }
+    .hourly-item.is-now .hourly-time { color: var(--accent); }
+    .hourly-emoji { font-size: 18px; margin-bottom: 4px; line-height: 1; }
+    .hourly-temp { font-size: 15px; font-weight: 700; margin-bottom: 4px; }
+    .hourly-precip-bar {
+      width: 100%; height: 3px; background: var(--surface);
+      border-radius: 2px; margin-bottom: 4px; overflow: hidden;
+    }
+    .hourly-precip-fill {
+      height: 100%; border-radius: 2px;
+      background: var(--accent); transition: width 0.3s;
+    }
+    .hourly-precip-fill.high { background: var(--purple); }
+    .hourly-detail {
+      font-size: 9px; color: var(--text-dim); line-height: 1.4;
+    }
+    .hourly-wind {
+      display: flex; align-items: center; justify-content: center;
+      gap: 2px; font-size: 10px; color: var(--text-dim); margin-top: 2px;
+    }
+    .hourly-uv {
+      font-size: 9px; font-weight: 600; margin-top: 2px;
+      padding: 1px 4px; border-radius: 4px; display: inline-block;
+    }
+    .hourly-uv.uv-low { background: rgba(34,197,94,0.15); color: var(--green); }
+    .hourly-uv.uv-mod { background: rgba(245,158,11,0.15); color: var(--amber); }
+    .hourly-uv.uv-high { background: rgba(239,68,68,0.15); color: var(--red); }
+    .hourly-uv.uv-extreme { background: rgba(168,85,247,0.15); color: var(--purple); }
+    .hourly-separator {
+      flex: 0 0 1px;
+      background: var(--border);
+      align-self: stretch;
+      margin: 0 4px;
+      opacity: 0.5;
+    }
+
+    /* ========================================
+       LIVE WEATHER MAP
+       ======================================== */
+    .weather-map-section {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      overflow: hidden;
+      margin-bottom: 28px;
+    }
+    .weather-map-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 16px 20px;
+      border-bottom: 1px solid var(--border);
+    }
+    .weather-map-title {
+      font-size: 14px; font-weight: 600;
+      display: flex; align-items: center; gap: 8px;
+    }
+    .weather-map-controls { display: flex; gap: 4px; }
+    .map-layer-btn {
+      padding: 4px 10px; border: 1px solid var(--border); border-radius: 6px;
+      background: transparent; color: var(--text-dim); font-size: 11px; font-weight: 500;
+      cursor: pointer; transition: all 0.2s;
+    }
+    .map-layer-btn.active {
+      background: var(--accent); color: #fff; border-color: var(--accent);
+    }
+    .map-layer-btn:hover:not(.active) {
+      border-color: var(--accent); color: var(--text);
+    }
+    .weather-map-frame {
+      width: 100%;
+      height: 420px;
+      border: none;
+      display: block;
+    }
+    .weather-map-footer {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 8px 20px;
+      font-size: 10px;
+      color: var(--text-dim);
+      border-top: 1px solid var(--border);
+    }
+    .weather-map-footer a {
+      color: var(--accent);
+      text-decoration: none;
+    }
+    .weather-map-footer a:hover { text-decoration: underline; }
+    @media (max-width: 768px) {
+      .weather-map-frame { height: 300px; }
+      .weather-map-controls { flex-wrap: wrap; }
+    }
   </style>
 </head>
 <body>
@@ -1130,9 +1272,40 @@
             </div>
           </div>
         </div>
+        <div class="panel-section" id="hourlyContainer" style="display:none;">
+          <div class="hourly-section">
+            <div class="hourly-header">
+              <div class="hourly-title">Hourly Forecast</div>
+              <div class="hourly-subtitle" id="hourlySubtitle"></div>
+            </div>
+            <div class="hourly-scroll" id="hourlyScroll"></div>
+          </div>
+        </div>
         <div class="panel-section">
           <div class="section-title" id="forecastStripTitle" style="display:none;">7-Day Outlook</div>
           <div class="forecast-strip" id="forecastStrip" style="display:none;"></div>
+        </div>
+        <div class="panel-section" id="weatherMapContainer">
+          <div class="section-title">Live Weather Map</div>
+          <div class="weather-map-section">
+            <div class="weather-map-header">
+              <div class="weather-map-title" id="weatherMapTitle">Radar &mdash; Loading...</div>
+              <div class="weather-map-controls" id="mapControls">
+                <button class="map-layer-btn active" data-layer="radar" onclick="setMapLayer('radar')">Radar</button>
+                <button class="map-layer-btn" data-layer="temp" onclick="setMapLayer('temp')">Temp</button>
+                <button class="map-layer-btn" data-layer="wind" onclick="setMapLayer('wind')">Wind</button>
+                <button class="map-layer-btn" data-layer="clouds" onclick="setMapLayer('clouds')">Clouds</button>
+                <button class="map-layer-btn" data-layer="rain" onclick="setMapLayer('rain')">Rain</button>
+                <button class="map-layer-btn" data-layer="pressure" onclick="setMapLayer('pressure')">Pressure</button>
+              </div>
+            </div>
+            <iframe id="weatherMapFrame" class="weather-map-frame" loading="lazy" allowfullscreen
+              src="about:blank" title="Live weather map"></iframe>
+            <div class="weather-map-footer">
+              <span>Powered by Windy.com &mdash; updates automatically</span>
+              <span id="weatherMapCoords"></span>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -1611,6 +1784,162 @@
         Math.round(minTemp) + '\u00B0 \u2014 ' + Math.round(maxTemp) + '\u00B0F | Max precip: ' + maxPrecip + '%';
     }
 
+    // ========================================
+    // HOURLY FORECAST TIMELINE
+    // ========================================
+    function renderHourlyForecast(hourlyData) {
+      const container = document.getElementById('hourlyContainer');
+      const scroll = document.getElementById('hourlyScroll');
+      const subtitle = document.getElementById('hourlySubtitle');
+
+      if (!hourlyData || hourlyData.length === 0) {
+        container.style.display = 'none';
+        return;
+      }
+
+      container.style.display = 'block';
+      scroll.replaceChildren();
+
+      let prevDate = null;
+
+      for (let i = 0; i < hourlyData.length; i++) {
+        const h = hourlyData[i];
+        const time = new Date(h.time);
+        const hour = time.getHours();
+        const dateStr = time.toLocaleDateString([], { month: 'short', day: 'numeric' });
+
+        // Insert day separator if the date changes
+        if (prevDate !== null && dateStr !== prevDate) {
+          const sep = el('div', { className: 'hourly-separator' });
+          scroll.appendChild(sep);
+        }
+        prevDate = dateStr;
+
+        const isNow = i === 0;
+        const timeLabel = isNow ? 'Now' : hour === 0 ? '12a' : hour < 12 ? hour + 'a' : hour === 12 ? '12p' : (hour - 12) + 'p';
+
+        const item = el('div', { className: 'hourly-item' + (isNow ? ' is-now' : '') });
+
+        // Time
+        item.appendChild(el('div', { className: 'hourly-time', textContent: timeLabel }));
+
+        // Condition emoji
+        item.appendChild(el('div', { className: 'hourly-emoji', textContent: getConditionEmoji(h.condition) }));
+
+        // Temperature
+        item.appendChild(el('div', { className: 'hourly-temp', textContent: Math.round(h.temp) + '\u00B0' }));
+
+        // Precip probability bar
+        const precipBar = el('div', { className: 'hourly-precip-bar' });
+        const precipFill = el('div', { className: 'hourly-precip-fill' + (h.precipProb >= 60 ? ' high' : '') });
+        precipFill.style.width = h.precipProb + '%';
+        precipBar.appendChild(precipFill);
+        item.appendChild(precipBar);
+
+        // Precip % text
+        if (h.precipProb > 0) {
+          item.appendChild(el('div', { className: 'hourly-detail', textContent: h.precipProb + '% rain' }));
+        }
+
+        // Wind
+        const windText = Math.round(h.windSpeed) + ' mph';
+        const windEl = el('div', { className: 'hourly-wind' });
+        windEl.textContent = windText;
+        if (h.gusts && h.gusts > h.windSpeed + 5) {
+          windEl.textContent = windText + ' g' + Math.round(h.gusts);
+        }
+        item.appendChild(windEl);
+
+        // UV index (daytime only)
+        if (h.uvIndex != null && h.uvIndex > 0 && hour >= 6 && hour <= 20) {
+          const uvClass = h.uvIndex >= 11 ? 'uv-extreme' : h.uvIndex >= 8 ? 'uv-high' : h.uvIndex >= 3 ? 'uv-mod' : 'uv-low';
+          item.appendChild(el('div', { className: 'hourly-uv ' + uvClass, textContent: 'UV ' + Math.round(h.uvIndex) }));
+        }
+
+        scroll.appendChild(item);
+      }
+
+      // Subtitle
+      const temps = hourlyData.map(d => d.temp);
+      const maxPrecip = Math.max(...hourlyData.map(d => d.precipProb));
+      const maxWind = Math.max(...hourlyData.map(d => d.windSpeed));
+      subtitle.textContent = Math.round(Math.min(...temps)) + '\u00B0\u2014' + Math.round(Math.max(...temps)) + '\u00B0F | '
+        + 'Max precip ' + maxPrecip + '% | Wind up to ' + Math.round(maxWind) + ' mph';
+    }
+
+    // ========================================
+    // LIVE WEATHER MAP (Windy.com embed)
+    // ========================================
+    let currentMapLayer = 'radar';
+
+    function getWindyUrl(layer) {
+      const lat = selectedLocation?.lat || config?.lat || 39.987;
+      const lon = selectedLocation?.lon || config?.lon || -90.760;
+
+      const layerMap = {
+        radar: { overlay: 'radar', product: 'radar' },
+        temp: { overlay: 'temp', product: 'ecmwf' },
+        wind: { overlay: 'wind', product: 'ecmwf' },
+        clouds: { overlay: 'clouds', product: 'ecmwf' },
+        rain: { overlay: 'rainAccu', product: 'ecmwf' },
+        pressure: { overlay: 'pressure', product: 'ecmwf' }
+      };
+
+      const cfg = layerMap[layer] || layerMap.radar;
+      const params = new URLSearchParams({
+        lat: lat,
+        lon: lon,
+        detailLat: lat,
+        detailLon: lon,
+        zoom: '7',
+        level: 'surface',
+        overlay: cfg.overlay,
+        product: cfg.product,
+        menu: '',
+        message: 'true',
+        marker: 'true',
+        calendar: 'now',
+        pressure: '',
+        type: 'map',
+        location: 'coordinates',
+        metricWind: 'mph',
+        metricTemp: '\u00B0F',
+        radarRange: '-1'
+      });
+
+      return 'https://embed.windy.com/embed2.html?' + params.toString();
+    }
+
+    function updateWeatherMap() {
+      const frame = document.getElementById('weatherMapFrame');
+      const title = document.getElementById('weatherMapTitle');
+      const coords = document.getElementById('weatherMapCoords');
+
+      if (!frame) return;
+
+      const layerNames = {
+        radar: 'Radar', temp: 'Temperature', wind: 'Wind',
+        clouds: 'Cloud Cover', rain: 'Rain Accumulation', pressure: 'Pressure'
+      };
+
+      const locName = selectedLocation?.name || config?.location || 'Weather';
+      title.textContent = (layerNames[currentMapLayer] || 'Radar') + ' \u2014 ' + locName;
+      coords.textContent = (selectedLocation?.lat || '') + ', ' + (selectedLocation?.lon || '');
+
+      frame.src = getWindyUrl(currentMapLayer);
+    }
+
+    function setMapLayer(layer) {
+      currentMapLayer = layer;
+
+      // Update button states
+      document.querySelectorAll('#mapControls .map-layer-btn').forEach(btn => {
+        btn.classList.toggle('active', btn.getAttribute('data-layer') === layer);
+      });
+
+      updateWeatherMap();
+    }
+
     async function init() {
       try {
         const res = await fetch('/api/config');
@@ -1625,7 +1954,9 @@
         if (wx.ok) {
           renderConditions(wx.summary);
           drawSparkline(wx.summary.next24h);
+          renderHourlyForecast(wx.summary.next24h);
           renderForecastStrip(wx.summary.futureDays);
+          updateWeatherMap();
           void loadSevereWeather();
           void loadSevereOutlook();
         }
@@ -1765,6 +2096,8 @@
       source.addEventListener('weather', (e) => {
         const data = JSON.parse(e.data);
         renderConditions(data);
+        if (data.next24h) renderHourlyForecast(data.next24h);
+        if (data.futureDays) renderForecastStrip(data.futureDays);
         statusEl.querySelector('.empty-title').textContent = 'Agents analyzing...';
         statusEl.querySelector('.empty-desc').textContent = 'Weather data loaded. Waiting for agent predictions...';
       });
@@ -2158,6 +2491,7 @@
       if (data.weather) {
         renderConditions(data.weather);
         drawSparkline(data.weather.next24h);
+        renderHourlyForecast(data.weather.next24h);
       }
 
       // Show export button
@@ -2393,6 +2727,7 @@
         }
         selectedLocation = data.locations[0];
         sel.value = selectedLocation.id;
+        updateWeatherMap();
       } catch (e) { /* ignore */ }
     }
 
@@ -2406,6 +2741,7 @@
         loadSevereOutlook();
         loadLocalForecasts();
         loadBrief();
+        updateWeatherMap();
       });
     }
 
@@ -2422,7 +2758,9 @@
         if (data.ok) {
           renderConditions(data.summary);
           drawSparkline(data.summary.next24h);
+          renderHourlyForecast(data.summary.next24h);
           renderForecastStrip(data.summary.futureDays);
+          updateWeatherMap();
           void loadSevereWeather();
           void loadSevereOutlook();
         }

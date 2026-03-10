@@ -9,6 +9,8 @@ Five specialist agents review the same weather context, argue from different for
 ## Highlights
 
 - Multi-agent consensus forecasting with quick, full, and live-stream modes
+- **Hourly forecast timeline** -- scrollable 24-hour breakdown with temp, precip, wind, and UV index per hour
+- **Live weather map** -- embedded Windy.com radar with switchable layers (radar, temp, wind, clouds, rain, pressure)
 - Date-selectable forecasts from the 7-day strip instead of a hard-coded next-day-only flow
 - Date-selectable severe outlook and severe analysis for today or upcoming forecast days
 - Readiness and status endpoints for deployment health checks
@@ -91,6 +93,16 @@ docker run --rm -p 3777:3777 --env-file .env swarmcast
 ```
 
 The container image includes a healthcheck against `/api/ready`.
+
+## Hourly Forecast and Weather Map
+
+The center panel includes two additional sections:
+
+**Hourly Forecast Timeline** -- a horizontally scrollable strip showing the next 24 hours. Each hour card displays the condition icon, temperature, a precipitation probability bar, wind speed with gust indicators, and a color-coded UV index badge during daytime hours. Day separators appear when the timeline crosses midnight. The first card is highlighted as "Now".
+
+**Live Weather Map** -- an embedded Windy.com map centered on the currently selected location. Six layer buttons switch between radar, temperature, wind, cloud cover, rain accumulation, and pressure overlays. The map re-centers automatically when you switch locations from the dropdown.
+
+Both sections update whenever weather data loads, a location changes, or a forecast stream delivers new conditions.
 
 ## Forecast and Severe Date Selection
 
