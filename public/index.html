@@ -1,0 +1,2636 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SwarmCast — Multi-Agent Weather Prediction</title>
+  <style>
+    :root {
+      --bg: #0a0e17;
+      --surface: #111827;
+      --surface-2: #1a2236;
+      --border: #1e293b;
+      --text: #e2e8f0;
+      --text-dim: #64748b;
+      --accent: #38bdf8;
+      --accent-glow: rgba(56, 189, 248, 0.15);
+      --green: #22c55e;
+      --red: #ef4444;
+      --amber: #f59e0b;
+      --purple: #a855f7;
+      --radius: 12px;
+    }
+
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      overflow-x: hidden;
+    }
+
+    body::before {
+      content: '';
+      position: fixed;
+      inset: 0;
+      background:
+        linear-gradient(rgba(56, 189, 248, 0.03) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(56, 189, 248, 0.03) 1px, transparent 1px);
+      background-size: 60px 60px;
+      pointer-events: none;
+      z-index: 0;
+    }
+
+    .app { position: relative; z-index: 1; max-width: 1400px; margin: 0 auto; padding: 24px; }
+
+    header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 32px;
+      padding-bottom: 20px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .logo { display: flex; align-items: center; gap: 12px; }
+
+    .logo-icon {
+      width: 44px; height: 44px;
+      background: linear-gradient(135deg, var(--accent), var(--purple));
+      border-radius: 12px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 24px;
+      box-shadow: 0 0 20px rgba(56, 189, 248, 0.3);
+    }
+
+    .logo h1 {
+      font-size: 24px; font-weight: 700;
+      background: linear-gradient(135deg, var(--accent), var(--purple));
+      -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;
+    }
+
+    .logo-sub { font-size: 12px; color: var(--text-dim); letter-spacing: 2px; text-transform: uppercase; }
+    .header-right { display: flex; align-items: center; gap: 16px; }
+
+    .location-badge {
+      display: flex; align-items: center; gap: 6px;
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: 8px; padding: 8px 14px;
+      font-size: 13px; color: var(--text-dim);
+    }
+
+    .btn {
+      background: linear-gradient(135deg, var(--accent), #818cf8);
+      color: #fff; border: none; border-radius: 8px;
+      padding: 10px 20px; font-size: 14px; font-weight: 600;
+      cursor: pointer; transition: all 0.2s;
+      display: flex; align-items: center; gap: 8px;
+    }
+
+    .btn:hover { transform: translateY(-1px); box-shadow: 0 4px 20px rgba(56, 189, 248, 0.3); }
+    .btn:active { transform: translateY(0); }
+    .btn:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
+
+    .conditions-bar {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+      gap: 12px; margin-bottom: 28px;
+    }
+
+    .condition-card {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: var(--radius); padding: 16px; text-align: center;
+    }
+
+    .condition-label { font-size: 11px; color: var(--text-dim); text-transform: uppercase; letter-spacing: 1px; margin-bottom: 6px; }
+    .condition-value { font-size: 24px; font-weight: 700; }
+    .condition-unit { font-size: 12px; color: var(--text-dim); margin-left: 2px; }
+
+    .main-grid {
+      display: grid; grid-template-columns: 1fr 1fr;
+      gap: 20px; margin-bottom: 28px;
+    }
+
+    @media (max-width: 900px) { .main-grid { grid-template-columns: 1fr; } }
+
+    .agent-card {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: var(--radius); overflow: hidden; transition: all 0.3s;
+    }
+
+    .agent-card:hover { border-color: var(--accent); box-shadow: 0 0 30px var(--accent-glow); }
+
+    .agent-header {
+      display: flex; align-items: center; gap: 10px;
+      padding: 16px 20px; border-bottom: 1px solid var(--border);
+    }
+
+    .agent-dot { width: 10px; height: 10px; border-radius: 50%; animation: pulse 2s ease-in-out infinite; flex-shrink: 0; }
+
+    .agent-avatar {
+      width: 36px;
+      height: 36px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 18px;
+      flex-shrink: 0;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .agent-avatar::before {
+      content: '';
+      position: absolute;
+      inset: 0;
+      border-radius: 50%;
+      opacity: 0.15;
+    }
+
+    @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+
+    .agent-name { font-weight: 600; font-size: 14px; flex: 1; }
+
+    .agent-confidence {
+      font-size: 13px; font-weight: 700;
+      padding: 3px 10px; border-radius: 20px;
+      background: rgba(34, 197, 94, 0.1); color: var(--green);
+    }
+
+    .agent-body { padding: 16px 20px; }
+
+    .agent-prediction { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 14px; }
+    .pred-item { display: flex; flex-direction: column; gap: 2px; }
+    .pred-label { font-size: 10px; color: var(--text-dim); text-transform: uppercase; letter-spacing: 1px; }
+    .pred-value { font-size: 16px; font-weight: 600; }
+
+    .agent-reasoning { font-size: 13px; color: var(--text-dim); line-height: 1.5; margin-bottom: 10px; }
+
+    .agent-dissent {
+      font-size: 12px; color: var(--amber);
+      background: rgba(245, 158, 11, 0.08);
+      padding: 8px 12px; border-radius: 8px; border-left: 3px solid var(--amber);
+    }
+
+    .agent-wildcard {
+      font-size: 12px; color: var(--purple);
+      background: rgba(168, 85, 247, 0.08);
+      padding: 8px 12px; border-radius: 8px; border-left: 3px solid var(--purple);
+      margin-top: 8px;
+    }
+
+    .consensus-panel {
+      grid-column: 1 / -1;
+      background: var(--surface); border: 2px solid var(--accent);
+      border-radius: var(--radius); padding: 28px;
+      box-shadow: 0 0 40px var(--accent-glow);
+    }
+
+    .consensus-header {
+      display: flex; align-items: center; justify-content: space-between;
+      margin-bottom: 20px;
+    }
+
+    .consensus-title { font-size: 18px; font-weight: 700; display: flex; align-items: center; gap: 10px; }
+    .consensus-badges { display: flex; gap: 10px; }
+    .badge { padding: 4px 12px; border-radius: 20px; font-size: 12px; font-weight: 600; }
+    .badge-confidence { background: rgba(34, 197, 94, 0.15); color: var(--green); }
+    .badge-agreement { background: rgba(56, 189, 248, 0.15); color: var(--accent); }
+
+    .consensus-prediction {
+      display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+      gap: 16px; margin-bottom: 20px; padding: 20px;
+      background: var(--surface-2); border-radius: 10px;
+    }
+
+    .consensus-pred-item { text-align: center; }
+    .consensus-pred-label { font-size: 10px; color: var(--text-dim); text-transform: uppercase; letter-spacing: 1px; margin-bottom: 4px; }
+    .consensus-pred-value { font-size: 28px; font-weight: 700; }
+
+    .consensus-narrative {
+      font-size: 15px; line-height: 1.7; color: var(--text);
+      margin-bottom: 16px; padding: 16px;
+      background: var(--surface-2); border-radius: 10px; border-left: 3px solid var(--accent);
+    }
+
+    .consensus-lists { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+    .consensus-list h4 { font-size: 12px; text-transform: uppercase; letter-spacing: 1px; color: var(--text-dim); margin-bottom: 8px; }
+    .consensus-list ul { list-style: none; }
+    .consensus-list li { font-size: 13px; padding: 6px 0; color: var(--text-dim); display: flex; align-items: flex-start; gap: 6px; }
+
+    .agreement-meter { margin: 20px 0; display: flex; align-items: center; gap: 16px; }
+    .meter-bar { flex: 1; height: 8px; background: var(--surface-2); border-radius: 4px; overflow: hidden; }
+    .meter-fill { height: 100%; border-radius: 4px; transition: width 1s ease; background: linear-gradient(90deg, var(--red), var(--amber), var(--green)); }
+    .meter-label { font-size: 12px; color: var(--text-dim); white-space: nowrap; }
+
+    .temp-comparison { margin: 20px 0; padding: 20px; background: var(--surface-2); border-radius: 10px; }
+    .temp-row { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; }
+    .temp-row:last-child { margin-bottom: 0; }
+    .temp-agent-name { width: 140px; font-size: 12px; color: var(--text-dim); display: flex; align-items: center; gap: 6px; }
+    .temp-bar-container { flex: 1; position: relative; height: 24px; }
+    .temp-bar {
+      position: absolute; height: 100%; border-radius: 4px; opacity: 0.7;
+      transition: all 1s ease; display: flex; align-items: center; justify-content: center;
+      font-size: 11px; font-weight: 600; color: white;
+    }
+
+    .loading-overlay {
+      position: fixed; inset: 0;
+      background: rgba(10, 14, 23, 0.9);
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+      z-index: 100; transition: opacity 0.3s;
+    }
+
+    .loading-overlay.hidden { opacity: 0; pointer-events: none; }
+
+    .swarm-loader { width: 120px; height: 120px; position: relative; margin-bottom: 24px; }
+
+    .bee {
+      position: absolute; width: 16px; height: 16px; border-radius: 50%;
+      background: var(--accent); box-shadow: 0 0 10px var(--accent);
+    }
+
+    .bee:nth-child(1) { animation: orbit1 2s linear infinite; }
+    .bee:nth-child(2) { animation: orbit2 2.3s linear infinite; }
+    .bee:nth-child(3) { animation: orbit3 1.8s linear infinite; }
+    .bee:nth-child(4) { animation: orbit4 2.6s linear infinite; }
+
+    @keyframes orbit1 { from { top:50%;left:50%;transform:translate(-50%,-50%)rotate(0deg)translateX(40px); } to { top:50%;left:50%;transform:translate(-50%,-50%)rotate(360deg)translateX(40px); } }
+    @keyframes orbit2 { from { top:50%;left:50%;transform:translate(-50%,-50%)rotate(90deg)translateX(35px); } to { top:50%;left:50%;transform:translate(-50%,-50%)rotate(450deg)translateX(35px); } }
+    @keyframes orbit3 { from { top:50%;left:50%;transform:translate(-50%,-50%)rotate(180deg)translateX(45px); } to { top:50%;left:50%;transform:translate(-50%,-50%)rotate(540deg)translateX(45px); } }
+    @keyframes orbit4 { from { top:50%;left:50%;transform:translate(-50%,-50%)rotate(270deg)translateX(30px); } to { top:50%;left:50%;transform:translate(-50%,-50%)rotate(630deg)translateX(30px); } }
+
+    .loading-text { font-size: 16px; color: var(--text-dim); }
+    .loading-agent { font-size: 14px; color: var(--accent); margin-top: 8px; min-height: 20px; }
+
+    .empty-state { text-align: center; padding: 80px 20px; grid-column: 1 / -1; }
+    .empty-icon { font-size: 64px; margin-bottom: 16px; opacity: 0.6; }
+    .empty-title { font-size: 20px; font-weight: 600; margin-bottom: 8px; }
+    .empty-desc { font-size: 14px; color: var(--text-dim); max-width: 400px; margin: 0 auto 24px; }
+
+    .key-dissent {
+      margin-top: 16px; padding: 14px 18px;
+      background: rgba(239, 68, 68, 0.08); border: 1px solid rgba(239, 68, 68, 0.2);
+      border-radius: 10px; font-size: 13px; color: var(--red);
+    }
+
+    .severe-none, .severe-low { color: var(--green); }
+    .severe-moderate { color: var(--amber); }
+    .severe-high, .severe-extreme { color: var(--red); }
+
+    /* Debate panel */
+    .debate-panel {
+      grid-column: 1 / -1;
+      background: var(--surface);
+      border: 1px solid var(--purple);
+      border-radius: var(--radius);
+      padding: 24px;
+      box-shadow: 0 0 30px rgba(168, 85, 247, 0.1);
+    }
+
+    .debate-title {
+      font-size: 16px;
+      font-weight: 700;
+      margin-bottom: 16px;
+      color: var(--purple);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .debate-responses {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 14px;
+    }
+
+    @media (max-width: 900px) { .debate-responses { grid-template-columns: 1fr; } }
+
+    .debate-response {
+      background: var(--surface-2);
+      border-radius: 10px;
+      padding: 16px;
+      border-left: 3px solid var(--border);
+    }
+
+    .debate-agent-name {
+      font-size: 13px;
+      font-weight: 600;
+      margin-bottom: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .debate-revised {
+      font-size: 11px;
+      padding: 2px 8px;
+      border-radius: 12px;
+      background: rgba(168, 85, 247, 0.15);
+      color: var(--purple);
+    }
+
+    .debate-reaction {
+      font-size: 13px;
+      color: var(--text-dim);
+      line-height: 1.5;
+      margin-bottom: 10px;
+    }
+
+    .debate-agree {
+      font-size: 12px;
+      color: var(--green);
+      padding: 6px 10px;
+      background: rgba(34, 197, 94, 0.06);
+      border-radius: 6px;
+      margin-bottom: 6px;
+    }
+
+    .debate-challenge {
+      font-size: 12px;
+      color: var(--amber);
+      padding: 6px 10px;
+      background: rgba(245, 158, 11, 0.06);
+      border-radius: 6px;
+    }
+
+    /* Mode toggle */
+    .mode-toggle {
+      display: flex;
+      gap: 4px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 3px;
+    }
+
+    .mode-btn {
+      padding: 6px 14px;
+      border: none;
+      border-radius: 6px;
+      font-size: 12px;
+      font-weight: 500;
+      cursor: pointer;
+      background: transparent;
+      color: var(--text-dim);
+      transition: all 0.2s;
+    }
+
+    .mode-btn.active {
+      background: var(--accent);
+      color: #fff;
+    }
+
+    .mode-btn:hover:not(.active) {
+      background: var(--surface-2);
+      color: var(--text);
+    }
+
+    /* Sparkline chart */
+    .sparkline-section {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 20px;
+      margin-bottom: 28px;
+    }
+
+    .sparkline-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 12px;
+    }
+
+    .sparkline-title { font-size: 13px; font-weight: 600; }
+    .sparkline-subtitle { font-size: 11px; color: var(--text-dim); }
+
+    .sparkline-canvas {
+      width: 100%;
+      height: 100px;
+      display: block;
+    }
+
+    .sparkline-legend {
+      display: flex;
+      gap: 20px;
+      margin-top: 8px;
+      font-size: 11px;
+      color: var(--text-dim);
+    }
+
+    .sparkline-legend-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      display: inline-block;
+      margin-right: 4px;
+      vertical-align: middle;
+    }
+
+    /* 7-day forecast strip */
+    .forecast-strip {
+      display: grid;
+      grid-template-columns: repeat(7, 1fr);
+      gap: 8px;
+      margin-bottom: 28px;
+    }
+
+    @media (max-width: 700px) { .forecast-strip { grid-template-columns: repeat(4, 1fr); } }
+
+    .day-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 14px 10px;
+      text-align: center;
+      transition: all 0.2s;
+      cursor: pointer;
+    }
+
+    .day-card:hover { border-color: var(--accent); transform: translateY(-2px); }
+    .day-card.today { border-color: var(--accent); background: var(--surface-2); }
+
+    .day-name { font-size: 11px; color: var(--text-dim); text-transform: uppercase; letter-spacing: 1px; margin-bottom: 4px; }
+    .day-date { font-size: 10px; color: var(--text-dim); margin-bottom: 8px; }
+    .day-condition { font-size: 12px; margin-bottom: 8px; }
+    .day-temps { font-size: 16px; font-weight: 700; }
+    .day-high { color: var(--text); }
+    .day-low { color: var(--text-dim); font-weight: 400; }
+    .day-precip { font-size: 10px; color: var(--accent); margin-top: 4px; }
+
+    /* Section title */
+    .section-title {
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--text-dim);
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      margin-bottom: 12px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .section-title::after {
+      content: '';
+      flex: 1;
+      height: 1px;
+      background: var(--border);
+    }
+
+    /* Local forecast comparison */
+    .local-panel {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 20px;
+      margin-bottom: 28px;
+    }
+
+    .local-title {
+      font-size: 14px;
+      font-weight: 600;
+      margin-bottom: 14px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .local-sources {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 12px;
+    }
+
+    .local-source {
+      background: var(--surface-2);
+      border-radius: 10px;
+      padding: 14px;
+      border-left: 3px solid var(--border);
+    }
+
+    .local-source-name {
+      font-size: 12px;
+      font-weight: 600;
+      margin-bottom: 4px;
+    }
+
+    .local-source-city {
+      font-size: 10px;
+      color: var(--text-dim);
+      margin-bottom: 10px;
+    }
+
+    .local-forecast-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 4px;
+    }
+
+    .local-forecast-label {
+      font-size: 11px;
+      color: var(--text-dim);
+    }
+
+    .local-forecast-value {
+      font-size: 13px;
+      font-weight: 600;
+    }
+
+    .local-detail {
+      font-size: 11px;
+      color: var(--text-dim);
+      line-height: 1.4;
+      margin-top: 8px;
+      padding-top: 8px;
+      border-top: 1px solid var(--border);
+    }
+
+    .local-link {
+      display: inline-block;
+      font-size: 11px;
+      color: var(--accent);
+      margin-top: 6px;
+      text-decoration: none;
+    }
+
+    .local-link:hover { text-decoration: underline; }
+
+    /* Accuracy panel */
+    .accuracy-panel {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 24px;
+      margin-bottom: 28px;
+    }
+
+    .accuracy-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 16px;
+    }
+
+    .accuracy-title { font-size: 16px; font-weight: 700; }
+
+    .accuracy-summary {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(100px, 1fr));
+      gap: 12px;
+      margin-bottom: 20px;
+    }
+
+    .accuracy-stat {
+      text-align: center;
+      padding: 12px;
+      background: var(--surface-2);
+      border-radius: 8px;
+    }
+
+    .accuracy-stat-label { font-size: 10px; color: var(--text-dim); text-transform: uppercase; letter-spacing: 1px; margin-bottom: 4px; }
+    .accuracy-stat-value { font-size: 22px; font-weight: 700; }
+
+    .grade-A { color: var(--green); }
+    .grade-B { color: var(--accent); }
+    .grade-C { color: var(--amber); }
+    .grade-D { color: #f97316; }
+    .grade-F { color: var(--red); }
+
+    .leaderboard { margin-top: 16px; }
+
+    .leaderboard-row {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 10px 14px;
+      background: var(--surface-2);
+      border-radius: 8px;
+      margin-bottom: 6px;
+    }
+
+    .leaderboard-rank {
+      width: 24px;
+      height: 24px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 12px;
+      font-weight: 700;
+      background: var(--border);
+      color: var(--text-dim);
+    }
+
+    .leaderboard-rank.rank-1 { background: linear-gradient(135deg, #fbbf24, #f59e0b); color: #000; }
+    .leaderboard-rank.rank-2 { background: linear-gradient(135deg, #94a3b8, #64748b); color: #000; }
+    .leaderboard-rank.rank-3 { background: linear-gradient(135deg, #d97706, #b45309); color: #000; }
+
+    .leaderboard-name { flex: 1; font-size: 13px; font-weight: 500; }
+    .leaderboard-stat { font-size: 12px; color: var(--text-dim); text-align: right; }
+    .leaderboard-error { font-size: 14px; font-weight: 600; }
+
+    .accuracy-empty {
+      text-align: center;
+      padding: 30px;
+      color: var(--text-dim);
+      font-size: 13px;
+    }
+
+    .status-bar {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 12px 0; font-size: 12px; color: var(--text-dim);
+      border-top: 1px solid var(--border); margin-top: 32px;
+    }
+
+    .status-provider { display: flex; align-items: center; gap: 6px; }
+    .status-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--green); }
+
+    .fade-in { animation: fadeIn 0.5s ease forwards; opacity: 0; }
+    @keyframes fadeIn { to { opacity: 1; } }
+    .delay-1 { animation-delay: 0.1s; }
+    .delay-2 { animation-delay: 0.2s; }
+    .delay-3 { animation-delay: 0.3s; }
+    .delay-4 { animation-delay: 0.4s; }
+
+    /* Location switcher */
+    .location-select {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: 8px; padding: 8px 14px; color: var(--text);
+      font-size: 13px; cursor: pointer; appearance: none;
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2364748b' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+      background-repeat: no-repeat; background-position: right 10px center;
+      padding-right: 30px;
+    }
+    .location-select:focus { outline: none; border-color: var(--accent); }
+
+    /* Severe weather alert banner */
+    .severe-banner {
+      background: linear-gradient(135deg, rgba(239,68,68,0.15), rgba(245,158,11,0.1));
+      border: 2px solid var(--red); border-radius: var(--radius);
+      padding: 20px 24px; margin-bottom: 28px;
+      animation: severePulse 3s ease-in-out infinite;
+    }
+    .severe-banner.moderate {
+      border-color: var(--amber);
+      background: linear-gradient(135deg, rgba(245,158,11,0.12), rgba(239,68,68,0.06));
+    }
+    .severe-banner.slight {
+      border-color: #ffcc00;
+      background: linear-gradient(135deg, rgba(255,204,0,0.1), rgba(245,158,11,0.05));
+    }
+    @keyframes severePulse {
+      0%, 100% { box-shadow: 0 0 0 0 rgba(239,68,68,0.3); }
+      50% { box-shadow: 0 0 20px 4px rgba(239,68,68,0.15); }
+    }
+    .severe-banner-header { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
+    .severe-banner-icon { font-size: 28px; }
+    .severe-banner-title { font-size: 18px; font-weight: 700; }
+    .severe-banner-level {
+      padding: 3px 12px; border-radius: 20px; font-size: 11px;
+      font-weight: 700; text-transform: uppercase; letter-spacing: 1px;
+    }
+    .severe-banner-body { font-size: 14px; line-height: 1.6; color: var(--text-dim); }
+    .severe-banner-body strong { color: var(--text); }
+    .severe-banner-threats { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 12px; }
+    .severe-threat-tag {
+      padding: 4px 12px; border-radius: 6px; font-size: 12px; font-weight: 600;
+      background: rgba(239,68,68,0.1); color: var(--red); border: 1px solid rgba(239,68,68,0.2);
+    }
+    .severe-banner-timing {
+      margin-top: 12px; padding: 10px 14px;
+      background: rgba(0,0,0,0.2); border-radius: 8px;
+      font-size: 13px; display: flex; align-items: center; gap: 8px;
+    }
+
+    /* CAPE sparkline */
+    .cape-section {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: var(--radius); padding: 20px; margin-bottom: 28px;
+    }
+    .cape-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+    .cape-title { font-size: 14px; font-weight: 600; display: flex; align-items: center; gap: 8px; }
+    .cape-value { font-size: 13px; font-weight: 700; padding: 3px 10px; border-radius: 20px; }
+    .cape-canvas { width: 100%; height: 100px; display: block; }
+    .cape-legend { display: flex; gap: 16px; margin-top: 8px; font-size: 11px; color: var(--text-dim); }
+
+    /* Reputation / leaderboard panel */
+    .reputation-panel {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: var(--radius); padding: 24px; margin-bottom: 28px;
+    }
+    .rep-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; }
+    .rep-title { font-size: 16px; font-weight: 700; display: flex; align-items: center; gap: 8px; }
+    .rep-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 14px; }
+    .rep-card {
+      background: var(--surface-2); border-radius: 10px; padding: 16px;
+      border-left: 3px solid var(--border); position: relative;
+    }
+    .rep-card-header { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+    .rep-rank { font-size: 20px; font-weight: 800; color: var(--text-dim); width: 28px; }
+    .rep-rank.gold { color: #ffd700; }
+    .rep-rank.silver { color: #c0c0c0; }
+    .rep-rank.bronze { color: #cd7f32; }
+    .rep-agent-name { font-size: 14px; font-weight: 600; flex: 1; }
+    .rep-weight {
+      font-size: 12px; font-weight: 700; padding: 2px 8px; border-radius: 12px;
+      background: rgba(56,189,248,0.1); color: var(--accent);
+    }
+    .rep-stats { display: flex; gap: 12px; font-size: 12px; color: var(--text-dim); }
+    .rep-stat-value { font-weight: 600; color: var(--text); }
+    .rep-badges { display: flex; gap: 4px; margin-top: 8px; flex-wrap: wrap; }
+    .rep-badge {
+      font-size: 11px; padding: 2px 8px; border-radius: 10px;
+      background: rgba(168,85,247,0.1); color: var(--purple);
+    }
+    .rep-streak { color: var(--green); font-weight: 600; }
+
+    /* Morning brief panel */
+    .brief-panel {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: var(--radius); padding: 24px; margin-bottom: 28px;
+      position: relative; overflow: hidden;
+    }
+    .brief-panel::before {
+      content: ''; position: absolute; top: 0; left: 0; right: 0; height: 3px;
+      background: linear-gradient(90deg, var(--accent), var(--purple), var(--amber));
+    }
+    .brief-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; }
+    .brief-title { font-size: 16px; font-weight: 700; display: flex; align-items: center; gap: 10px; }
+    .brief-text { font-size: 15px; line-height: 1.8; color: var(--text-dim); white-space: pre-wrap; }
+    .brief-text p { margin-bottom: 12px; }
+    .brief-timestamp { font-size: 11px; color: var(--text-dim); margin-top: 12px; }
+    .brief-btn {
+      background: var(--surface-2); border: 1px solid var(--border); border-radius: 6px;
+      padding: 6px 14px; font-size: 12px; color: var(--text-dim); cursor: pointer;
+    }
+    .brief-btn:hover { border-color: var(--accent); color: var(--text); }
+
+    /* Schedule panel */
+    .schedule-panel {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: var(--radius); padding: 20px; margin-bottom: 28px;
+      display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
+    }
+    .schedule-label { font-size: 13px; font-weight: 600; display: flex; align-items: center; gap: 8px; }
+    .schedule-toggle {
+      position: relative; width: 44px; height: 24px;
+      background: var(--surface-2); border-radius: 12px;
+      cursor: pointer; border: 1px solid var(--border); transition: all 0.3s;
+    }
+    .schedule-toggle.active { background: var(--green); border-color: var(--green); }
+    .schedule-toggle::after {
+      content: ''; position: absolute; top: 2px; left: 2px;
+      width: 18px; height: 18px; border-radius: 50%;
+      background: white; transition: transform 0.3s;
+    }
+    .schedule-toggle.active::after { transform: translateX(20px); }
+    .schedule-select {
+      background: var(--surface-2); border: 1px solid var(--border);
+      border-radius: 6px; padding: 6px 10px; color: var(--text);
+      font-size: 12px;
+    }
+    .schedule-status { font-size: 12px; color: var(--text-dim); margin-left: auto; }
+
+    /* 3-day severe outlook strip */
+    .severe-outlook {
+      display: grid; grid-template-columns: repeat(3, 1fr);
+      gap: 12px; margin-bottom: 28px;
+    }
+    .severe-day {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: var(--radius); padding: 16px; text-align: center;
+      transition: all 0.3s; position: relative; overflow: hidden;
+    }
+    .severe-day::before {
+      content: ''; position: absolute; top: 0; left: 0; right: 0; height: 3px;
+    }
+    .severe-day.sev-none::before { background: var(--green); }
+    .severe-day.sev-slight::before { background: #ffcc00; }
+    .severe-day.sev-moderate::before { background: var(--amber); }
+    .severe-day.sev-high::before { background: var(--red); }
+    .severe-day.sev-extreme::before { background: #ff00ff; }
+    .severe-day-date { font-size: 11px; color: var(--text-dim); text-transform: uppercase; letter-spacing: 1px; margin-bottom: 6px; }
+    .severe-day-cape { font-size: 24px; font-weight: 700; margin-bottom: 4px; }
+    .severe-day-cape-unit { font-size: 11px; color: var(--text-dim); }
+    .severe-day-label { font-size: 12px; font-weight: 600; margin-top: 6px; padding: 2px 10px; border-radius: 12px; display: inline-block; }
+    .severe-day-gusts { font-size: 11px; color: var(--text-dim); margin-top: 6px; }
+    .severe-day-mini { display: flex; gap: 1px; align-items: flex-end; justify-content: center; height: 30px; margin-top: 8px; }
+    .severe-day-bar { width: 3px; border-radius: 1px; min-height: 1px; transition: height 0.3s; }
+
+    /* Keyboard hint */
+    .kbd-hint {
+      font-size: 10px; color: var(--text-dim); margin-left: 8px; opacity: 0.5;
+      padding: 1px 5px; border: 1px solid var(--border); border-radius: 3px;
+      font-family: monospace;
+    }
+
+    /* Auto-score button */
+    .btn-sm {
+      background: var(--surface-2); border: 1px solid var(--border); border-radius: 6px;
+      padding: 6px 14px; font-size: 12px; color: var(--text-dim); cursor: pointer;
+      transition: all 0.2s;
+    }
+    .btn-sm:hover { border-color: var(--accent); color: var(--text); }
+    .btn-sm:disabled { opacity: 0.4; cursor: not-allowed; }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <header>
+      <div class="logo">
+        <div class="logo-icon">&#x1F41D;</div>
+        <div>
+          <h1>SwarmCast</h1>
+          <div class="logo-sub">Multi-Agent Weather Prediction</div>
+        </div>
+      </div>
+      <div class="header-right">
+        <select class="location-select" id="locationSelect" onchange="switchLocation(this.value)">
+          <option value="">Loading...</option>
+        </select>
+        <div class="mode-toggle">
+          <button class="mode-btn" id="modeQuick" onclick="setMode('quick')">Quick <span class="kbd-hint">1</span></button>
+          <button class="mode-btn active" id="modeStream" onclick="setMode('stream')">Live <span class="kbd-hint">2</span></button>
+          <button class="mode-btn" id="modeFull" onclick="setMode('full')">Full <span class="kbd-hint">3</span></button>
+        </div>
+        <button class="btn" id="forecastBtn" onclick="runForecast()">Run Swarm <span class="kbd-hint">R</span></button>
+        <button class="btn" id="allLocBtn" onclick="forecastAllLocations()" style="background:var(--surface);border:1px solid var(--border);font-size:12px;padding:8px 12px;">All Locations</button>
+        <button class="btn" id="exportBtn" onclick="exportForecast()" style="background:var(--surface);border:1px solid var(--border);font-size:12px;padding:8px 12px;display:none;">Export</button>
+      </div>
+    </header>
+
+    <div id="severeBanner" style="display:none;"></div>
+    <div id="briefPanel" style="display:none;"></div>
+    <div class="conditions-bar" id="conditionsBar"></div>
+
+    <div class="sparkline-section" id="sparklineSection" style="display:none;">
+      <div class="sparkline-header">
+        <div class="sparkline-title">Next 24 Hours</div>
+        <div class="sparkline-subtitle" id="sparklineSubtitle"></div>
+      </div>
+      <canvas class="sparkline-canvas" id="sparklineCanvas"></canvas>
+      <div class="sparkline-legend">
+        <span><span class="sparkline-legend-dot" style="background:var(--accent)"></span> Temperature</span>
+        <span><span class="sparkline-legend-dot" style="background:var(--purple)"></span> Precip %</span>
+        <span><span class="sparkline-legend-dot" style="background:rgba(255,255,255,0.2)"></span> Wind</span>
+      </div>
+    </div>
+
+    <div id="severeOutlook" style="display:none;"></div>
+    <div id="capeSection" style="display:none;"></div>
+
+    <div id="schedulePanel"></div>
+
+    <div class="section-title" id="reputationTitle" style="display:none;">Agent Reputation</div>
+    <div id="reputationPanel" style="display:none;"></div>
+
+    <div class="section-title" id="forecastStripTitle" style="display:none;">7-Day Outlook</div>
+    <div class="forecast-strip" id="forecastStrip" style="display:none;"></div>
+
+    <div class="section-title" id="swarmTitle" style="display:none;">Swarm Analysis</div>
+    <div class="main-grid" id="mainGrid">
+      <div class="empty-state">
+        <div class="empty-icon">&#x1F41D;</div>
+        <div class="empty-title">Ready to swarm</div>
+        <div class="empty-desc">Hit "Run Swarm" to dispatch 5 specialist agents. They'll analyze current conditions, debate, and converge on a prediction.</div>
+        <button class="btn" onclick="runForecast()">Run First Forecast</button>
+      </div>
+    </div>
+
+    <div class="section-title" id="accuracyTitle" style="display:none;">Forecast Accuracy</div>
+    <div class="accuracy-panel" id="accuracyPanel" style="display:none;"></div>
+
+    <div class="section-title" id="localTitle" style="display:none;">Local Station Comparison</div>
+    <div class="local-panel" id="localPanel" style="display:none;"></div>
+
+    <div class="status-bar">
+      <div class="status-provider">
+        <span class="status-dot"></span>
+        <span id="statusProvider">Connecting...</span>
+      </div>
+      <div>
+        <span id="statusTime">&mdash;</span>
+        <span id="statusUptime" style="margin-left:12px;"></span>
+      </div>
+    </div>
+  </div>
+
+  <div class="loading-overlay hidden" id="loadingOverlay">
+    <div class="swarm-loader">
+      <div class="bee" style="background: #3b82f6; box-shadow: 0 0 10px #3b82f6;"></div>
+      <div class="bee" style="background: #ef4444; box-shadow: 0 0 10px #ef4444;"></div>
+      <div class="bee" style="background: #8b5cf6; box-shadow: 0 0 10px #8b5cf6;"></div>
+      <div class="bee" style="background: #f59e0b; box-shadow: 0 0 10px #f59e0b;"></div>
+    </div>
+    <div class="loading-text">Agents analyzing weather data...</div>
+    <div class="loading-agent" id="loadingAgent"></div>
+  </div>
+
+  <script>
+    // HTML escape to prevent XSS from LLM-generated content
+    function esc(str) {
+      if (str == null) return '';
+      const div = document.createElement('div');
+      div.textContent = String(str);
+      return div.innerHTML;
+    }
+
+    // Safe DOM builder helpers
+    function el(tag, attrs, ...children) {
+      const node = document.createElement(tag);
+      if (attrs) {
+        for (const [k, v] of Object.entries(attrs)) {
+          if (k === 'className') node.className = v;
+          else if (k.startsWith('style') && typeof v === 'object') Object.assign(node.style, v);
+          else if (k === 'textContent') node.textContent = v;
+          else node.setAttribute(k, v);
+        }
+      }
+      for (const child of children) {
+        if (typeof child === 'string') node.appendChild(document.createTextNode(child));
+        else if (child) node.appendChild(child);
+      }
+      return node;
+    }
+
+    let config = {};
+    let forecastMode = 'stream';
+    let selectedLocation = null;
+    let agentWeightsCache = {};
+
+    function setMode(mode) {
+      forecastMode = mode;
+      document.getElementById('modeQuick').className = 'mode-btn' + (mode === 'quick' ? ' active' : '');
+      document.getElementById('modeStream').className = 'mode-btn' + (mode === 'stream' ? ' active' : '');
+      document.getElementById('modeFull').className = 'mode-btn' + (mode === 'full' ? ' active' : '');
+    }
+
+    // Agent avatar SVG generators
+    const agentAvatars = {
+      statistician: (color) => {
+        const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+        svg.setAttribute('viewBox', '0 0 40 40');
+        svg.setAttribute('width', '36');
+        svg.setAttribute('height', '36');
+        svg.style.borderRadius = '50%';
+        // Bar chart icon
+        const bg = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+        bg.setAttribute('cx', '20'); bg.setAttribute('cy', '20'); bg.setAttribute('r', '20');
+        bg.setAttribute('fill', color); bg.setAttribute('opacity', '0.2');
+        svg.appendChild(bg);
+        [[10,26,4,8],[17,22,4,12],[24,18,4,16],[31,14,4,20]].forEach(([x,y,w,h]) => {
+          const r = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+          r.setAttribute('x', x-2); r.setAttribute('y', y); r.setAttribute('width', w);
+          r.setAttribute('height', h); r.setAttribute('rx', '1'); r.setAttribute('fill', color);
+          svg.appendChild(r);
+        });
+        return svg;
+      },
+      contrarian: (color) => {
+        const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+        svg.setAttribute('viewBox', '0 0 40 40');
+        svg.setAttribute('width', '36'); svg.setAttribute('height', '36');
+        svg.style.borderRadius = '50%';
+        const bg = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+        bg.setAttribute('cx', '20'); bg.setAttribute('cy', '20'); bg.setAttribute('r', '20');
+        bg.setAttribute('fill', color); bg.setAttribute('opacity', '0.2');
+        svg.appendChild(bg);
+        // Lightning bolt
+        const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+        path.setAttribute('d', 'M22 8 L14 22 H20 L18 32 L28 18 H22 Z');
+        path.setAttribute('fill', color);
+        svg.appendChild(path);
+        return svg;
+      },
+      pattern_hunter: (color) => {
+        const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+        svg.setAttribute('viewBox', '0 0 40 40');
+        svg.setAttribute('width', '36'); svg.setAttribute('height', '36');
+        svg.style.borderRadius = '50%';
+        const bg = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+        bg.setAttribute('cx', '20'); bg.setAttribute('cy', '20'); bg.setAttribute('r', '20');
+        bg.setAttribute('fill', color); bg.setAttribute('opacity', '0.2');
+        svg.appendChild(bg);
+        // Magnifying glass with wave
+        const circle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+        circle.setAttribute('cx', '17'); circle.setAttribute('cy', '17'); circle.setAttribute('r', '8');
+        circle.setAttribute('fill', 'none'); circle.setAttribute('stroke', color); circle.setAttribute('stroke-width', '2.5');
+        svg.appendChild(circle);
+        const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+        line.setAttribute('x1', '23'); line.setAttribute('y1', '23'); line.setAttribute('x2', '31'); line.setAttribute('y2', '31');
+        line.setAttribute('stroke', color); line.setAttribute('stroke-width', '2.5'); line.setAttribute('stroke-linecap', 'round');
+        svg.appendChild(line);
+        // wave inside
+        const wave = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+        wave.setAttribute('d', 'M11 17 Q14 13 17 17 Q20 21 23 17');
+        wave.setAttribute('fill', 'none'); wave.setAttribute('stroke', color); wave.setAttribute('stroke-width', '1.5');
+        svg.appendChild(wave);
+        return svg;
+      },
+      sentinel: (color) => {
+        const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+        svg.setAttribute('viewBox', '0 0 40 40');
+        svg.setAttribute('width', '36'); svg.setAttribute('height', '36');
+        svg.style.borderRadius = '50%';
+        const bg = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+        bg.setAttribute('cx', '20'); bg.setAttribute('cy', '20'); bg.setAttribute('r', '20');
+        bg.setAttribute('fill', color); bg.setAttribute('opacity', '0.2');
+        svg.appendChild(bg);
+        // Shield
+        const shield = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+        shield.setAttribute('d', 'M20 8 L30 13 L30 22 C30 28 25 32 20 34 C15 32 10 28 10 22 L10 13 Z');
+        shield.setAttribute('fill', 'none'); shield.setAttribute('stroke', color); shield.setAttribute('stroke-width', '2');
+        svg.appendChild(shield);
+        // Exclamation
+        const ex1 = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+        ex1.setAttribute('x', '18.5'); ex1.setAttribute('y', '15'); ex1.setAttribute('width', '3'); ex1.setAttribute('height', '10');
+        ex1.setAttribute('rx', '1.5'); ex1.setAttribute('fill', color);
+        svg.appendChild(ex1);
+        const ex2 = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+        ex2.setAttribute('cx', '20'); ex2.setAttribute('cy', '29'); ex2.setAttribute('r', '1.5');
+        ex2.setAttribute('fill', color);
+        svg.appendChild(ex2);
+        return svg;
+      },
+      local: (color) => {
+        const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+        svg.setAttribute('viewBox', '0 0 40 40');
+        svg.setAttribute('width', '36'); svg.setAttribute('height', '36');
+        svg.style.borderRadius = '50%';
+        const bg = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+        bg.setAttribute('cx', '20'); bg.setAttribute('cy', '20'); bg.setAttribute('r', '20');
+        bg.setAttribute('fill', color); bg.setAttribute('opacity', '0.2');
+        svg.appendChild(bg);
+        // Map pin
+        const pin = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+        pin.setAttribute('d', 'M20 8 C14.5 8 10 12.5 10 18 C10 25 20 34 20 34 C20 34 30 25 30 18 C30 12.5 25.5 8 20 8 Z');
+        pin.setAttribute('fill', 'none'); pin.setAttribute('stroke', color); pin.setAttribute('stroke-width', '2');
+        svg.appendChild(pin);
+        const dot = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+        dot.setAttribute('cx', '20'); dot.setAttribute('cy', '18'); dot.setAttribute('r', '4');
+        dot.setAttribute('fill', color);
+        svg.appendChild(dot);
+        return svg;
+      }
+    };
+
+    function createAgentAvatar(agentId, color) {
+      const generator = agentAvatars[agentId];
+      if (!generator) {
+        // Fallback: colored circle
+        const div = el('div', { className: 'agent-avatar' });
+        div.style.background = color + '33';
+        div.style.border = '2px solid ' + color;
+        return div;
+      }
+      return generator(color);
+    }
+
+    // Weather condition to emoji mapping
+    const conditionEmoji = {
+      'Clear sky': '\u2600\uFE0F', 'Mainly clear': '\uD83C\uDF24\uFE0F', 'Partly cloudy': '\u26C5',
+      'Overcast': '\u2601\uFE0F', 'Foggy': '\uD83C\uDF2B\uFE0F', 'Depositing rime fog': '\uD83C\uDF2B\uFE0F',
+      'Light drizzle': '\uD83C\uDF26\uFE0F', 'Moderate drizzle': '\uD83C\uDF27\uFE0F', 'Dense drizzle': '\uD83C\uDF27\uFE0F',
+      'Slight rain': '\uD83C\uDF26\uFE0F', 'Moderate rain': '\uD83C\uDF27\uFE0F', 'Heavy rain': '\uD83C\uDF27\uFE0F',
+      'Slight snow': '\uD83C\uDF28\uFE0F', 'Moderate snow': '\u2744\uFE0F', 'Heavy snow': '\u2744\uFE0F',
+      'Thunderstorm': '\u26C8\uFE0F', 'Slight rain showers': '\uD83C\uDF26\uFE0F',
+      'Moderate rain showers': '\uD83C\uDF27\uFE0F', 'Violent rain showers': '\uD83C\uDF27\uFE0F'
+    };
+
+    function getConditionEmoji(condition) {
+      return conditionEmoji[condition] || '\uD83C\uDF24\uFE0F';
+    }
+
+    function renderForecastStrip(futureDays) {
+      if (!futureDays || futureDays.length === 0) return;
+
+      const strip = document.getElementById('forecastStrip');
+      const title = document.getElementById('forecastStripTitle');
+      strip.style.display = 'grid';
+      title.style.display = 'flex';
+      strip.replaceChildren();
+
+      const dayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+      const today = new Date().toISOString().split('T')[0];
+
+      for (const day of futureDays.slice(0, 7)) {
+        const d = new Date(day.date + 'T12:00:00');
+        const isToday = day.date === today;
+        const card = el('div', { className: 'day-card' + (isToday ? ' today' : '') },
+          el('div', { className: 'day-name', textContent: dayNames[d.getDay()] }),
+          el('div', { className: 'day-date', textContent: (d.getMonth() + 1) + '/' + d.getDate() }),
+          el('div', { className: 'day-condition', textContent: getConditionEmoji(day.condition) }),
+          el('div', { className: 'day-temps' },
+            el('span', { className: 'day-high', textContent: Math.round(day.high) + '\u00B0' }),
+            document.createTextNode(' '),
+            el('span', { className: 'day-low', textContent: Math.round(day.low) + '\u00B0' })
+          ),
+          el('div', { className: 'day-precip', textContent: day.precipProb > 0 ? day.precipProb + '% precip' : '' })
+        );
+
+        // Click to run swarm for that day
+        card.addEventListener('click', () => {
+          const dateInput = day.date;
+          const currentEndpoint = forecastMode === 'stream'
+            ? '/api/forecast/stream?date=' + dateInput
+            : (forecastMode === 'quick' ? '/api/forecast/quick?date=' + dateInput : '/api/forecast?date=' + dateInput);
+          // For now, just highlight
+          strip.querySelectorAll('.day-card').forEach(c => c.classList.remove('today'));
+          card.classList.add('today');
+        });
+
+        strip.appendChild(card);
+      }
+    }
+
+    function drawSparkline(hourlyData) {
+      const section = document.getElementById('sparklineSection');
+      const canvas = document.getElementById('sparklineCanvas');
+      const ctx = canvas.getContext('2d');
+
+      if (!hourlyData || hourlyData.length === 0) {
+        section.style.display = 'none';
+        return;
+      }
+
+      section.style.display = 'block';
+
+      // Set canvas size for retina
+      const rect = canvas.getBoundingClientRect();
+      canvas.width = rect.width * 2;
+      canvas.height = rect.height * 2;
+      ctx.scale(2, 2);
+      const w = rect.width;
+      const h = rect.height;
+
+      ctx.clearRect(0, 0, w, h);
+
+      const temps = hourlyData.map(d => d.temp);
+      const precipProbs = hourlyData.map(d => d.precipProb);
+      const winds = hourlyData.map(d => d.windSpeed);
+
+      const minT = Math.min(...temps) - 2;
+      const maxT = Math.max(...temps) + 2;
+
+      const padding = { top: 15, bottom: 20, left: 0, right: 0 };
+      const plotW = w - padding.left - padding.right;
+      const plotH = h - padding.top - padding.bottom;
+
+      function xPos(i) { return padding.left + (i / (hourlyData.length - 1)) * plotW; }
+      function yTemp(t) { return padding.top + (1 - (t - minT) / (maxT - minT)) * plotH; }
+      function yPrecip(p) { return padding.top + (1 - p / 100) * plotH; }
+      function yWind(spd) {
+        const maxW = Math.max(...winds, 20);
+        return padding.top + (1 - spd / maxW) * plotH;
+      }
+
+      // Draw wind area
+      ctx.beginPath();
+      ctx.moveTo(xPos(0), h - padding.bottom);
+      for (let i = 0; i < hourlyData.length; i++) {
+        ctx.lineTo(xPos(i), yWind(winds[i]));
+      }
+      ctx.lineTo(xPos(hourlyData.length - 1), h - padding.bottom);
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.04)';
+      ctx.fill();
+
+      // Draw precip probability
+      ctx.beginPath();
+      for (let i = 0; i < hourlyData.length; i++) {
+        if (i === 0) ctx.moveTo(xPos(i), yPrecip(precipProbs[i]));
+        else ctx.lineTo(xPos(i), yPrecip(precipProbs[i]));
+      }
+      ctx.strokeStyle = '#a855f7';
+      ctx.lineWidth = 1.5;
+      ctx.setLineDash([4, 4]);
+      ctx.stroke();
+      ctx.setLineDash([]);
+
+      // Draw temperature line
+      ctx.beginPath();
+      for (let i = 0; i < hourlyData.length; i++) {
+        if (i === 0) ctx.moveTo(xPos(i), yTemp(temps[i]));
+        else ctx.lineTo(xPos(i), yTemp(temps[i]));
+      }
+      ctx.strokeStyle = '#38bdf8';
+      ctx.lineWidth = 2;
+      ctx.stroke();
+
+      // Temperature gradient fill
+      ctx.beginPath();
+      ctx.moveTo(xPos(0), h - padding.bottom);
+      for (let i = 0; i < hourlyData.length; i++) {
+        ctx.lineTo(xPos(i), yTemp(temps[i]));
+      }
+      ctx.lineTo(xPos(hourlyData.length - 1), h - padding.bottom);
+      const grad = ctx.createLinearGradient(0, padding.top, 0, h - padding.bottom);
+      grad.addColorStop(0, 'rgba(56, 189, 248, 0.15)');
+      grad.addColorStop(1, 'rgba(56, 189, 248, 0.0)');
+      ctx.fillStyle = grad;
+      ctx.fill();
+
+      // Draw dots on temp line every 3 hours
+      for (let i = 0; i < hourlyData.length; i += 3) {
+        ctx.beginPath();
+        ctx.arc(xPos(i), yTemp(temps[i]), 3, 0, Math.PI * 2);
+        ctx.fillStyle = '#38bdf8';
+        ctx.fill();
+
+        // Label
+        ctx.fillStyle = '#64748b';
+        ctx.font = '10px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText(Math.round(temps[i]) + '\u00B0', xPos(i), yTemp(temps[i]) - 8);
+
+        // Time label at bottom
+        const time = new Date(hourlyData[i].time);
+        const hour = time.getHours();
+        const label = hour === 0 ? '12a' : hour < 12 ? hour + 'a' : hour === 12 ? '12p' : (hour - 12) + 'p';
+        ctx.fillText(label, xPos(i), h - 4);
+      }
+
+      // Subtitle
+      const minTemp = Math.min(...temps);
+      const maxTemp = Math.max(...temps);
+      const maxPrecip = Math.max(...precipProbs);
+      document.getElementById('sparklineSubtitle').textContent =
+        Math.round(minTemp) + '\u00B0 \u2014 ' + Math.round(maxTemp) + '\u00B0F | Max precip: ' + maxPrecip + '%';
+    }
+
+    async function init() {
+      try {
+        const res = await fetch('/api/config');
+        config = await res.json();
+        document.getElementById('statusProvider').textContent = config.provider + ' \u2022 ' + config.agentCount + ' agents';
+        const wxRes = await fetch('/api/weather');
+        const wx = await wxRes.json();
+        if (wx.ok) {
+          renderConditions(wx.summary);
+          drawSparkline(wx.summary.next24h);
+          renderForecastStrip(wx.summary.futureDays);
+        }
+
+        // Load latest forecast from history if available
+        const histRes = await fetch('/api/history?limit=1');
+        const hist = await histRes.json();
+        if (hist.ok && hist.forecasts && hist.forecasts.length > 0) {
+          const latest = hist.forecasts[0];
+          renderForecast({ ...latest, ok: true });
+          document.getElementById('statusTime').textContent =
+            'Last run: ' + new Date(latest.timestamp).toLocaleTimeString();
+        }
+      } catch (e) {
+        document.getElementById('statusProvider').textContent = 'Connection error';
+      }
+    }
+
+    function windDirLabel(deg) {
+      const dirs = ['N','NNE','NE','ENE','E','ESE','SE','SSE','S','SSW','SW','WSW','W','WNW','NW','NNW'];
+      return dirs[Math.round(deg / 22.5) % 16];
+    }
+
+    function renderConditions(summary) {
+      const c = summary.current;
+      const bar = document.getElementById('conditionsBar');
+      bar.replaceChildren();
+
+      // Dew point calculation (Magnus formula approximation)
+      const dewPoint = c.temp - ((100 - c.humidity) / 5);
+
+      const items = [
+        ['Temperature', Math.round(c.temp) + '\u00B0F'],
+        ['Feels Like', Math.round(c.feelsLike) + '\u00B0F'],
+        ['Conditions', c.condition],
+        ['Humidity', c.humidity + '%'],
+        ['Wind', Math.round(c.windSpeed) + ' mph ' + windDirLabel(c.windDir)],
+        ['Pressure', Math.round(c.pressure) + ' hPa'],
+        ['Dew Point', Math.round(dewPoint) + '\u00B0F'],
+        ['Precipitation', c.precipitation + ' in']
+      ];
+      for (const [label, value] of items) {
+        const card = el('div', { className: 'condition-card' },
+          el('div', { className: 'condition-label', textContent: label }),
+          el('div', { className: 'condition-value', textContent: value })
+        );
+
+        // Color code dew point for comfort
+        if (label === 'Dew Point') {
+          const dp = Math.round(dewPoint);
+          if (dp >= 70) card.style.borderBottom = '3px solid var(--red)';
+          else if (dp >= 60) card.style.borderBottom = '3px solid var(--amber)';
+          else if (dp >= 50) card.style.borderBottom = '3px solid var(--green)';
+          else card.style.borderBottom = '3px solid var(--accent)';
+        }
+
+        // Pressure trend indicator
+        if (label === 'Pressure') {
+          const p = Math.round(c.pressure);
+          if (p < 1000) card.style.borderBottom = '3px solid var(--red)';
+          else if (p < 1010) card.style.borderBottom = '3px solid var(--amber)';
+          else card.style.borderBottom = '3px solid var(--green)';
+        }
+
+        bar.appendChild(card);
+      }
+    }
+
+    async function runForecast() {
+      if (forecastMode === 'stream') {
+        return runStreamForecast();
+      }
+
+      const btn = document.getElementById('forecastBtn');
+      const overlay = document.getElementById('loadingOverlay');
+      btn.disabled = true;
+      overlay.classList.remove('hidden');
+
+      const agents = ['The Statistician', 'The Contrarian', 'The Pattern Hunter', 'The Sentinel'];
+      let agentIdx = 0;
+      const agentInterval = setInterval(() => {
+        document.getElementById('loadingAgent').textContent = agents[agentIdx % agents.length] + ' analyzing...';
+        agentIdx++;
+      }, 1500);
+
+      try {
+        const endpoint = forecastMode === 'quick' ? '/api/forecast/quick' : '/api/forecast';
+        const locParams = selectedLocation ? '?lat=' + selectedLocation.lat + '&lon=' + selectedLocation.lon + '&location=' + encodeURIComponent(selectedLocation.name) : '';
+        const res = await fetch(endpoint + locParams);
+        const data = await res.json();
+        clearInterval(agentInterval);
+        overlay.classList.add('hidden');
+        btn.disabled = false;
+        if (data.ok) {
+          renderForecast(data);
+          document.getElementById('statusTime').textContent =
+            'Last run: ' + new Date(data.timestamp).toLocaleTimeString() + ' \u2022 ' + data.meta.totalElapsed + 's';
+        } else {
+          alert('Forecast error: ' + data.error);
+        }
+      } catch (e) {
+        clearInterval(agentInterval);
+        overlay.classList.add('hidden');
+        btn.disabled = false;
+        alert('Network error: ' + e.message);
+      }
+    }
+
+    // Live streaming mode — agents appear as they finish
+    async function runStreamForecast() {
+      const btn = document.getElementById('forecastBtn');
+      const grid = document.getElementById('mainGrid');
+      btn.disabled = true;
+
+      // Clear and show live status
+      grid.replaceChildren();
+      const statusEl = el('div', { className: 'empty-state', style: 'padding:40px 20px;' },
+        el('div', { className: 'empty-icon', textContent: '\u23F3' }),
+        el('div', { className: 'empty-title', textContent: 'Swarm initializing...' }),
+        el('div', { className: 'empty-desc', textContent: 'Agents will appear as they complete analysis' })
+      );
+      statusEl.style.gridColumn = '1 / -1';
+      grid.appendChild(statusEl);
+
+      const startTime = Date.now();
+      const streamAgents = [];
+      let streamConsensus = null;
+      let debateResponses = [];
+      let agentIndex = 0;
+
+      const locParams = selectedLocation ? 'lat=' + selectedLocation.lat + '&lon=' + selectedLocation.lon + '&location=' + encodeURIComponent(selectedLocation.name) + '&' : '';
+      const source = new EventSource('/api/forecast/stream?' + locParams + 'debate=true');
+
+      source.addEventListener('status', (e) => {
+        const data = JSON.parse(e.data);
+        statusEl.querySelector('.empty-title').textContent = data.message;
+      });
+
+      source.addEventListener('weather', (e) => {
+        const data = JSON.parse(e.data);
+        renderConditions(data);
+        statusEl.querySelector('.empty-title').textContent = 'Agents analyzing...';
+        statusEl.querySelector('.empty-desc').textContent = 'Weather data loaded. Waiting for agent predictions...';
+      });
+
+      source.addEventListener('agent_start', (e) => {
+        const data = JSON.parse(e.data);
+        statusEl.querySelector('.empty-desc').textContent = data.emoji + ' ' + data.name + ' is thinking...';
+      });
+
+      source.addEventListener('agent_done', (e) => {
+        const agent = JSON.parse(e.data);
+        streamAgents.push(agent);
+        agentIndex++;
+
+        // Remove status if it's still there
+        if (grid.contains(statusEl) && agentIndex >= 1) {
+          statusEl.querySelector('.empty-title').textContent = 'Receiving predictions...';
+        }
+
+        // Add agent card with animation
+        const card = buildAgentCard(agent, agentIndex);
+        grid.insertBefore(card, statusEl);
+
+        // Update status with how many are done
+        statusEl.querySelector('.empty-desc').textContent = agentIndex + ' of 5 agents complete';
+      });
+
+      source.addEventListener('agent_error', (e) => {
+        const agent = JSON.parse(e.data);
+        streamAgents.push(agent);
+        agentIndex++;
+        const card = buildAgentCard(agent, agentIndex);
+        grid.insertBefore(card, statusEl);
+      });
+
+      source.addEventListener('consensus', (e) => {
+        streamConsensus = JSON.parse(e.data);
+
+        // Remove status message
+        if (grid.contains(statusEl)) grid.removeChild(statusEl);
+
+        // Add temp comparison
+        const successful = streamAgents.filter(a => a.result);
+        if (successful.length > 1) {
+          const allTemps = successful.flatMap(a => [a.result.prediction.high_temp, a.result.prediction.low_temp]);
+          const tempSpread = Math.max(...successful.map(a => a.result.prediction.high_temp)) - Math.min(...successful.map(a => a.result.prediction.high_temp));
+          grid.appendChild(buildTempComparison(successful, { tempSpread }));
+        }
+
+        // Add consensus panel
+        grid.appendChild(buildConsensusPanel(streamConsensus));
+      });
+
+      source.addEventListener('debate_response', (e) => {
+        debateResponses.push(JSON.parse(e.data));
+      });
+
+      source.addEventListener('complete', (e) => {
+        source.close();
+        btn.disabled = false;
+
+        const data = JSON.parse(e.data);
+        const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+        document.getElementById('statusTime').textContent =
+          'Last run: ' + new Date(data.timestamp).toLocaleTimeString() + ' \u2022 ' + elapsed + 's (streamed)';
+
+        // Remove status if still present
+        if (grid.contains(statusEl)) grid.removeChild(statusEl);
+
+        // Add debate panel if we got responses
+        if (debateResponses.length > 0) {
+          const debatePanel = buildDebatePanel({ elapsed: elapsed, responses: debateResponses });
+          if (debatePanel) grid.appendChild(debatePanel);
+        }
+      });
+
+      source.addEventListener('error', (e) => {
+        source.close();
+        btn.disabled = false;
+        if (grid.contains(statusEl)) {
+          statusEl.querySelector('.empty-title').textContent = 'Stream error';
+          statusEl.querySelector('.empty-desc').textContent = 'Connection lost. Try again.';
+        }
+      });
+
+      source.onerror = () => {
+        source.close();
+        btn.disabled = false;
+      };
+    }
+
+    function buildAgentCard(agent, delay) {
+      const card = el('div', { className: 'agent-card fade-in delay-' + delay });
+
+      if (agent.error) {
+        const header = el('div', { className: 'agent-header' },
+          createAgentAvatar(agent.id, agent.color),
+          el('span', { className: 'agent-name', textContent: agent.name }),
+          el('span', { className: 'agent-confidence', style: 'background:rgba(239,68,68,0.15);color:var(--red);', textContent: 'ERROR' })
+        );
+        const body = el('div', { className: 'agent-body' },
+          el('div', { className: 'agent-reasoning', textContent: agent.error })
+        );
+        card.append(header, body);
+        return card;
+      }
+
+      const r = agent.result;
+      const confColor = r.confidence >= 70 ? 'var(--green)' : r.confidence >= 40 ? 'var(--amber)' : 'var(--red)';
+      const confBg = r.confidence >= 70 ? 'rgba(34,197,94,0.1)' : r.confidence >= 40 ? 'rgba(245,158,11,0.1)' : 'rgba(239,68,68,0.1)';
+
+      const header = el('div', { className: 'agent-header' },
+        createAgentAvatar(agent.id, agent.color),
+        el('span', { className: 'agent-name', textContent: agent.name }),
+        Object.assign(el('span', { className: 'agent-confidence', textContent: r.confidence + '%' }),
+          { style: { background: confBg, color: confColor } })
+      );
+
+      // Show reputation weight if available
+      const w = agentWeightsCache[agent.id];
+      if (w && w.weight !== undefined) {
+        const weightBadge = el('span', { textContent: w.weight + 'x' });
+        weightBadge.style.cssText = 'font-size:11px;padding:2px 8px;border-radius:12px;background:rgba(56,189,248,0.1);color:var(--accent);font-weight:600;margin-left:4px;';
+        header.appendChild(weightBadge);
+      }
+
+      const predGrid = el('div', { className: 'agent-prediction' });
+      const predItems = [
+        ['High', r.prediction.high_temp + '\u00B0F'],
+        ['Low', r.prediction.low_temp + '\u00B0F'],
+        ['Precip', r.prediction.precip_chance + '%'],
+        ['Severe', r.prediction.severe_risk]
+      ];
+      for (const [label, val] of predItems) {
+        const item = el('div', { className: 'pred-item' },
+          el('span', { className: 'pred-label', textContent: label }),
+          el('span', { className: 'pred-value' + (label === 'Severe' ? ' severe-' + esc(r.prediction.severe_risk) : ''), textContent: val })
+        );
+        predGrid.appendChild(item);
+      }
+
+      const body = el('div', { className: 'agent-body' }, predGrid,
+        el('div', { className: 'agent-reasoning', textContent: r.reasoning })
+      );
+
+      // Highlight severe risk if moderate or higher
+      const severeRisk = (r.prediction.severe_risk || 'none').toLowerCase();
+      if (severeRisk === 'moderate' || severeRisk === 'high' || severeRisk === 'extreme') {
+        card.style.borderColor = severeRisk === 'extreme' ? '#ff00ff' : severeRisk === 'high' ? 'var(--red)' : 'var(--amber)';
+        card.style.boxShadow = '0 0 20px ' + (severeRisk === 'extreme' ? 'rgba(255,0,255,0.2)' : severeRisk === 'high' ? 'rgba(239,68,68,0.2)' : 'rgba(245,158,11,0.15)');
+      }
+
+      if (r.dissent && r.dissent !== 'None') {
+        body.appendChild(el('div', { className: 'agent-dissent', textContent: r.dissent }));
+      }
+      if (r.wild_card && r.wild_card !== 'None') {
+        body.appendChild(el('div', { className: 'agent-wildcard', textContent: r.wild_card }));
+      }
+
+      card.append(header, body);
+      return card;
+    }
+
+    function buildTempComparison(successful, meta) {
+      const allTemps = successful.flatMap(a => [a.result.prediction.high_temp, a.result.prediction.low_temp]);
+      const minTemp = Math.min(...allTemps) - 5;
+      const maxTemp = Math.max(...allTemps) + 5;
+      const range = maxTemp - minTemp;
+
+      const card = el('div', { className: 'agent-card fade-in', style: 'grid-column:1/-1;' });
+      const header = el('div', { className: 'agent-header' },
+        el('span', { className: 'agent-name', textContent: 'Temperature Spread' }),
+        Object.assign(el('span', { className: 'agent-confidence' }),
+          { textContent: '\u00B1' + meta.tempSpread + '\u00B0F', style: 'background:rgba(56,189,248,0.1);color:var(--accent);' })
+      );
+
+      const comp = el('div', { className: 'temp-comparison' });
+      for (const a of successful) {
+        const lowPct = ((a.result.prediction.low_temp - minTemp) / range) * 100;
+        const highPct = ((a.result.prediction.high_temp - minTemp) / range) * 100;
+        const row = el('div', { className: 'temp-row' },
+          el('div', { className: 'temp-agent-name', textContent: a.emoji + ' ' + a.name.split(' ').pop() })
+        );
+        const container = el('div', { className: 'temp-bar-container' });
+        const bar = el('div', { className: 'temp-bar', textContent: a.result.prediction.low_temp + '\u00B0 \u2014 ' + a.result.prediction.high_temp + '\u00B0' });
+        bar.style.cssText = 'left:' + lowPct + '%;width:' + (highPct - lowPct) + '%;background:' + a.color + ';';
+        container.appendChild(bar);
+        row.appendChild(container);
+        comp.appendChild(row);
+      }
+
+      const body = el('div', { className: 'agent-body' }, comp);
+      card.append(header, body);
+      return card;
+    }
+
+    function buildConsensusList(title, items, markerClass) {
+      const wrap = el('div', { className: 'consensus-list ' + markerClass });
+      wrap.appendChild(el('h4', { textContent: title }));
+      const ul = el('ul');
+      for (const item of (items || [])) {
+        const li = el('li');
+        const marker = document.createTextNode(markerClass === 'convergence-list' ? '\u2713 ' : markerClass === 'divergence-list' ? '\u26A1 ' : '\uD83D\uDC41 ');
+        li.appendChild(marker);
+        li.appendChild(document.createTextNode(item));
+        ul.appendChild(li);
+      }
+      wrap.appendChild(ul);
+      return wrap;
+    }
+
+    function buildConsensusPanel(c) {
+      const panel = el('div', { className: 'consensus-panel fade-in' });
+
+      // Glow red/amber when severe risk is elevated
+      const severeRisk = (c.consensus?.severe_risk || 'none').toLowerCase();
+      if (severeRisk === 'moderate') {
+        panel.style.borderColor = 'var(--amber)';
+        panel.style.boxShadow = '0 0 40px rgba(245,158,11,0.2)';
+      } else if (severeRisk === 'high' || severeRisk === 'extreme') {
+        panel.style.borderColor = 'var(--red)';
+        panel.style.boxShadow = '0 0 40px rgba(239,68,68,0.3)';
+      }
+
+      // Header
+      const header = el('div', { className: 'consensus-header' },
+        el('div', { className: 'consensus-title', textContent: 'Swarm Consensus' }),
+        el('div', { className: 'consensus-badges' },
+          el('span', { className: 'badge badge-confidence', textContent: 'Confidence: ' + c.overall_confidence + '%' }),
+          el('span', { className: 'badge badge-agreement', textContent: 'Agreement: ' + c.agreement_score + '%' })
+        )
+      );
+
+      // Agreement meter
+      const meter = el('div', { className: 'agreement-meter' },
+        el('span', { className: 'meter-label', textContent: 'Divided' }),
+        el('div', { className: 'meter-bar' })
+      );
+      const fill = el('div', { className: 'meter-fill' });
+      fill.style.width = c.agreement_score + '%';
+      meter.querySelector('.meter-bar').appendChild(fill);
+      meter.appendChild(el('span', { className: 'meter-label', textContent: 'United' }));
+
+      // Prediction grid
+      const pred = el('div', { className: 'consensus-prediction' });
+      const predItems = [
+        ['High', c.consensus.high_temp + '\u00B0'],
+        ['Low', c.consensus.low_temp + '\u00B0'],
+        ['Precip', c.consensus.precip_chance + '%'],
+        ['Wind', c.consensus.wind_max + ' mph'],
+        ['Conditions', c.consensus.condition],
+        ['Severe Risk', c.consensus.severe_risk]
+      ];
+      for (const [label, val] of predItems) {
+        const item = el('div', { className: 'consensus-pred-item' },
+          el('div', { className: 'consensus-pred-label', textContent: label }),
+          el('div', {
+            className: 'consensus-pred-value' + (label === 'Severe Risk' ? ' severe-' + esc(c.consensus.severe_risk) : ''),
+            textContent: val,
+            style: (label === 'Conditions' ? 'font-size:16px' : '')
+          })
+        );
+        pred.appendChild(item);
+      }
+
+      // Narrative
+      const narrative = el('div', { className: 'consensus-narrative', textContent: c.narrative });
+
+      panel.append(header, meter, pred, narrative);
+
+      // Key dissent
+      if (c.key_dissent && c.key_dissent !== 'None') {
+        const dissent = el('div', { className: 'key-dissent' },
+          el('strong', { textContent: 'Key Dissent: ' }),
+          document.createTextNode(c.key_dissent)
+        );
+        panel.appendChild(dissent);
+      }
+
+      // Lists
+      const lists = el('div', { className: 'consensus-lists', style: 'margin-top:16px;' },
+        buildConsensusList('Convergence', c.convergence_points, 'convergence-list'),
+        buildConsensusList('Divergence', c.divergence_points, 'divergence-list')
+      );
+      panel.appendChild(lists);
+
+      if (c.watch_items && c.watch_items.length) {
+        panel.appendChild(buildConsensusList('Watch Items', c.watch_items, 'watch-list'));
+      }
+
+      return panel;
+    }
+
+    function buildDebatePanel(debate) {
+      if (!debate || !debate.responses || debate.responses.length === 0) return null;
+
+      const panel = el('div', { className: 'debate-panel fade-in' });
+      panel.appendChild(el('div', { className: 'debate-title', textContent: 'Agent Debate (' + debate.elapsed + 's)' }));
+
+      const grid = el('div', { className: 'debate-responses' });
+
+      for (const resp of debate.responses) {
+        if (!resp.debate) continue;
+        const d = resp.debate;
+
+        const card = el('div', { className: 'debate-response' });
+        card.style.borderLeftColor = resp.color;
+
+        const nameRow = el('div', { className: 'debate-agent-name' },
+          document.createTextNode(resp.emoji + ' ' + resp.name)
+        );
+
+        if (d.revised_prediction) {
+          nameRow.appendChild(el('span', { className: 'debate-revised', textContent: 'REVISED' }));
+        }
+        if (d.revised_confidence) {
+          const badge = el('span', { className: 'debate-revised', textContent: d.revised_confidence + '% conf' });
+          nameRow.appendChild(badge);
+        }
+
+        card.appendChild(nameRow);
+        card.appendChild(el('div', { className: 'debate-reaction', textContent: d.reaction }));
+
+        if (d.strongest_agreement) {
+          card.appendChild(el('div', { className: 'debate-agree', textContent: d.strongest_agreement }));
+        }
+        if (d.strongest_challenge) {
+          card.appendChild(el('div', { className: 'debate-challenge', textContent: d.strongest_challenge }));
+        }
+
+        grid.appendChild(card);
+      }
+
+      panel.appendChild(grid);
+      return panel;
+    }
+
+    function renderForecast(data) {
+      const grid = document.getElementById('mainGrid');
+      grid.replaceChildren();
+      document.getElementById('swarmTitle').style.display = 'flex';
+
+      // Agent cards
+      data.agents.forEach((agent, i) => {
+        grid.appendChild(buildAgentCard(agent, i + 1));
+      });
+
+      // Temperature comparison
+      const successful = data.agents.filter(a => a.result);
+      if (successful.length > 1) {
+        grid.appendChild(buildTempComparison(successful, data.meta));
+      }
+
+      // Consensus
+      if (data.consensus) {
+        grid.appendChild(buildConsensusPanel(data.consensus));
+      }
+
+      // Debate panel
+      if (data.debate) {
+        const debatePanel = buildDebatePanel(data.debate);
+        if (debatePanel) grid.appendChild(debatePanel);
+      }
+
+      if (data.weather) {
+        renderConditions(data.weather);
+        drawSparkline(data.weather.next24h);
+      }
+
+      // Show export button
+      document.getElementById('exportBtn').style.display = 'flex';
+    }
+
+    async function loadLocalForecasts() {
+      try {
+        const locParams = selectedLocation ? '?lat=' + selectedLocation.lat + '&lon=' + selectedLocation.lon : '';
+        const res = await fetch('/api/local' + locParams);
+        const data = await res.json();
+        if (!data.ok || !data.forecasts || data.forecasts.length === 0) return;
+
+        const panel = document.getElementById('localPanel');
+        const title = document.getElementById('localTitle');
+        panel.style.display = 'block';
+        title.style.display = 'flex';
+        panel.replaceChildren();
+
+        // If we have a SwarmCast forecast, show comparison header
+        const histRes = await fetch('/api/history?limit=1');
+        const hist = await histRes.json();
+        const latest = hist.ok && hist.forecasts?.length > 0 ? hist.forecasts[0] : null;
+        const nws = data.forecasts.find(f => f.source === 'nws');
+
+        if (latest?.consensus?.consensus && nws?.forecast) {
+          const c = latest.consensus.consensus;
+          const n = nws.forecast;
+          const compWrap = el('div', { style: 'display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:16px;' });
+
+          const swarmCard = el('div', { style: 'background:var(--surface-2);border-radius:10px;padding:14px;border-top:3px solid var(--accent);' },
+            el('div', { style: 'font-size:12px;font-weight:700;color:var(--accent);margin-bottom:8px;', textContent: 'SwarmCast Consensus' }),
+            el('div', { style: 'font-size:20px;font-weight:700;', textContent: c.high_temp + '\u00B0 / ' + c.low_temp + '\u00B0F' }),
+            el('div', { style: 'font-size:12px;color:var(--text-dim);margin-top:4px;', textContent: c.condition }),
+            el('div', { style: 'font-size:12px;color:var(--text-dim);', textContent: 'Precip: ' + c.precip_chance + '% | Wind: ' + c.wind_max + ' mph' })
+          );
+
+          const nwsCard = el('div', { style: 'background:var(--surface-2);border-radius:10px;padding:14px;border-top:3px solid var(--green);' },
+            el('div', { style: 'font-size:12px;font-weight:700;color:var(--green);margin-bottom:8px;', textContent: 'NWS Official' }),
+            el('div', { style: 'font-size:20px;font-weight:700;', textContent: (n.high || '?') + '\u00B0F' }),
+            el('div', { style: 'font-size:12px;color:var(--text-dim);margin-top:4px;', textContent: n.condition || '' }),
+            el('div', { style: 'font-size:12px;color:var(--text-dim);', textContent: 'Precip: ' + (n.precipProb || '?') + '% | Wind: ' + (n.wind || '?') })
+          );
+
+          compWrap.append(swarmCard, nwsCard);
+
+          // Show diff
+          if (n.high && c.high_temp) {
+            const diff = Math.abs(c.high_temp - n.high);
+            const diffColor = diff <= 2 ? 'var(--green)' : diff <= 5 ? 'var(--amber)' : 'var(--red)';
+            const diffText = diff === 0 ? 'Perfect agreement on high temp' : 'High temp diff: ' + diff + '\u00B0F';
+            compWrap.appendChild(el('div', {
+              style: 'grid-column:1/-1;text-align:center;font-size:11px;color:' + diffColor + ';padding:4px;',
+              textContent: diffText
+            }));
+          }
+
+          panel.appendChild(compWrap);
+        }
+
+        const titleEl = el('div', { className: 'local-title', textContent: 'How local sources compare' });
+        panel.appendChild(titleEl);
+
+        const grid = el('div', { className: 'local-sources' });
+
+        for (const source of data.forecasts) {
+          const card = el('div', { className: 'local-source' });
+          card.style.borderLeftColor = source.color;
+
+          card.appendChild(el('div', { className: 'local-source-name', textContent: source.name }));
+
+          if (source.forecast) {
+            const fc = source.forecast;
+            const rows = [
+              ['High', fc.high != null ? fc.high + '\u00B0F' : '\u2014'],
+              ['Low', fc.low != null ? fc.low + '\u00B0F' : '\u2014'],
+              ['Conditions', fc.condition || '\u2014'],
+              ['Precip', fc.precipProb != null ? fc.precipProb + '%' : '\u2014'],
+              ['Wind', fc.wind || '\u2014']
+            ];
+
+            for (const [label, val] of rows) {
+              const row = el('div', { className: 'local-forecast-row' },
+                el('span', { className: 'local-forecast-label', textContent: label }),
+                el('span', { className: 'local-forecast-value', textContent: val })
+              );
+              card.appendChild(row);
+            }
+
+            if (fc.detail) {
+              const detail = el('div', { className: 'local-detail', textContent: fc.detail });
+              card.appendChild(detail);
+            }
+          } else if (source.url) {
+            card.appendChild(el('div', { className: 'local-source-city', textContent: source.city || '' }));
+            const link = el('a', {
+              className: 'local-link',
+              textContent: 'View forecast \u2192',
+              href: source.url
+            });
+            link.target = '_blank';
+            link.rel = 'noopener noreferrer';
+            card.appendChild(link);
+          }
+
+          grid.appendChild(card);
+        }
+
+        panel.appendChild(grid);
+      } catch (e) {
+        // Silently fail — local forecasts are optional
+      }
+    }
+
+    async function loadAccuracy() {
+      try {
+        const res = await fetch('/api/accuracy');
+        const data = await res.json();
+        if (!data.ok) return;
+
+        const panel = document.getElementById('accuracyPanel');
+        const title = document.getElementById('accuracyTitle');
+
+        if (!data.summary && (!data.leaderboard || data.leaderboard.length === 0)) {
+          // Show message about needing more data
+          panel.style.display = 'block';
+          title.style.display = 'flex';
+          panel.replaceChildren(
+            el('div', { className: 'accuracy-empty', textContent: data.message || 'Run forecasts daily to build accuracy data. Check back after tomorrow!' })
+          );
+          return;
+        }
+
+        panel.style.display = 'block';
+        title.style.display = 'flex';
+        panel.replaceChildren();
+
+        // Header
+        const header = el('div', { className: 'accuracy-header' },
+          el('div', { className: 'accuracy-title', textContent: 'How accurate is the swarm?' })
+        );
+        panel.appendChild(header);
+
+        // Summary stats
+        if (data.summary) {
+          const s = data.summary;
+          const summaryGrid = el('div', { className: 'accuracy-summary' });
+          const stats = [
+            ['Forecasts Scored', s.totalEvaluated],
+            ['Avg Temp Error', s.avgTempError + '\u00B0F'],
+            ['High Error', s.avgHighError + '\u00B0F'],
+            ['Low Error', s.avgLowError + '\u00B0F'],
+            ['Precip Accuracy', s.precipAccuracy + '%']
+          ];
+
+          for (const [label, val] of stats) {
+            summaryGrid.appendChild(
+              el('div', { className: 'accuracy-stat' },
+                el('div', { className: 'accuracy-stat-label', textContent: label }),
+                el('div', { className: 'accuracy-stat-value', textContent: val })
+              )
+            );
+          }
+
+          // Grade distribution
+          if (s.gradeDistribution) {
+            const grades = ['A', 'B', 'C', 'D', 'F'];
+            for (const g of grades) {
+              if (s.gradeDistribution[g] > 0) {
+                summaryGrid.appendChild(
+                  el('div', { className: 'accuracy-stat' },
+                    el('div', { className: 'accuracy-stat-label', textContent: 'Grade ' + g }),
+                    el('div', { className: 'accuracy-stat-value grade-' + g, textContent: s.gradeDistribution[g] })
+                  )
+                );
+              }
+            }
+          }
+
+          panel.appendChild(summaryGrid);
+        }
+
+        // Agent leaderboard
+        if (data.leaderboard && data.leaderboard.length > 0) {
+          const lbTitle = el('div', { style: 'font-size:13px;font-weight:600;margin-bottom:10px;color:var(--text-dim);', textContent: 'Agent Leaderboard' });
+          panel.appendChild(lbTitle);
+
+          const lb = el('div', { className: 'leaderboard' });
+          data.leaderboard.forEach((agent, i) => {
+            const rankClass = i < 3 ? ' rank-' + (i + 1) : '';
+            const row = el('div', { className: 'leaderboard-row' },
+              el('div', { className: 'leaderboard-rank' + rankClass, textContent: i + 1 }),
+              createAgentAvatar(agent.id, ''),
+              el('div', { className: 'leaderboard-name', textContent: agent.emoji + ' ' + agent.name }),
+              el('div', { className: 'leaderboard-stat', textContent: 'Precip: ' + agent.precipAccuracy + '%' }),
+              el('div', { className: 'leaderboard-error', textContent: '\u00B1' + agent.avgError + '\u00B0' })
+            );
+            lb.appendChild(row);
+          });
+          panel.appendChild(lb);
+        }
+      } catch (e) {
+        // Silently fail — accuracy is informational
+      }
+    }
+
+    async function exportForecast() {
+      try {
+        const res = await fetch('/api/export/text');
+        const text = await res.text();
+        await navigator.clipboard.writeText(text);
+        const btn = document.getElementById('exportBtn');
+        const orig = btn.textContent;
+        btn.textContent = 'Copied!';
+        setTimeout(() => { btn.textContent = orig; }, 2000);
+      } catch (e) {
+        // Fallback: open in new tab
+        window.open('/api/export/text', '_blank');
+      }
+    }
+
+    // Location switching
+    async function loadLocations() {
+      try {
+        const res = await fetch('/api/locations');
+        const data = await res.json();
+        if (!data.ok) return;
+        const sel = document.getElementById('locationSelect');
+        sel.replaceChildren();
+        for (const loc of data.locations) {
+          const opt = el('option', { value: loc.id, textContent: loc.name + ' — ' + loc.description });
+          sel.appendChild(opt);
+        }
+        selectedLocation = data.locations[0];
+        sel.value = selectedLocation.id;
+      } catch (e) { /* ignore */ }
+    }
+
+    function switchLocation(locId) {
+      fetch('/api/locations').then(r => r.json()).then(data => {
+        if (!data.ok) return;
+        selectedLocation = data.locations.find(l => l.id === locId) || data.locations[0];
+        // Reload all location-dependent panels
+        loadWeatherForLocation();
+        loadSevereWeather();
+        loadSevereOutlook();
+        loadLocalForecasts();
+        loadBrief();
+      });
+    }
+
+    function getLocationParams() {
+      if (!selectedLocation) return '';
+      return '&lat=' + selectedLocation.lat + '&lon=' + selectedLocation.lon + '&location=' + encodeURIComponent(selectedLocation.name);
+    }
+
+    async function loadWeatherForLocation() {
+      try {
+        const params = selectedLocation ? '?lat=' + selectedLocation.lat + '&lon=' + selectedLocation.lon : '';
+        const res = await fetch('/api/weather' + params);
+        const data = await res.json();
+        if (data.ok) {
+          renderConditions(data.summary);
+          drawSparkline(data.summary.next24h);
+          renderForecastStrip(data.summary.futureDays);
+        }
+      } catch (e) { /* ignore */ }
+    }
+
+    // Severe weather
+    async function loadSevereWeather() {
+      try {
+        const locId = selectedLocation?.id || 'mt-sterling';
+        const res = await fetch('/api/severe?location=' + locId);
+        const data = await res.json();
+        if (!data.ok) return;
+
+        const banner = document.getElementById('severeBanner');
+        const capeContainer = document.getElementById('capeSection');
+
+        // Tomorrow's severe data
+        const tmrw = data.tomorrow;
+        if (!tmrw) return;
+
+        // Show CAPE chart if we have data
+        if (tmrw.capeProfile && tmrw.maxCape > 500) {
+          renderCapeChart(tmrw);
+          capeContainer.style.display = 'block';
+        }
+
+        // Show severe banner if threat level is anything other than none
+        if (tmrw.severity.level !== 'none') {
+          // Get detailed analysis
+          const analysisRes = await fetch('/api/severe/analysis?location=' + locId);
+          const analysisData = await analysisRes.json();
+          renderSevereBanner(tmrw, analysisData.analysis, analysisData.alerts);
+        } else {
+          banner.style.display = 'none';
+        }
+      } catch (e) {
+        // Silently fail
+      }
+    }
+
+    function renderSevereBanner(severe, analysis, alerts) {
+      const banner = document.getElementById('severeBanner');
+      banner.style.display = 'block';
+      banner.replaceChildren();
+
+      const levelClass = severe.severity.level === 'high' || severe.severity.level === 'extreme' ? '' :
+                         severe.severity.level === 'moderate' ? ' moderate' : ' slight';
+
+      const wrap = el('div', { className: 'severe-banner' + levelClass });
+
+      // Header
+      const header = el('div', { className: 'severe-banner-header' },
+        el('span', { className: 'severe-banner-icon', textContent: severe.severity.level === 'extreme' ? '\u26A0\uFE0F' : '\u26A1' }),
+        el('span', { className: 'severe-banner-title', textContent: 'Severe Weather Outlook — Tomorrow' })
+      );
+      const levelBadge = el('span', { className: 'severe-banner-level', textContent: severe.severity.label });
+      levelBadge.style.cssText = 'background:' + severe.severity.color + '22;color:' + severe.severity.color + ';border:1px solid ' + severe.severity.color + '44;';
+      header.appendChild(levelBadge);
+      wrap.appendChild(header);
+
+      // Analysis body
+      if (analysis) {
+        const body = el('div', { className: 'severe-banner-body' });
+        body.appendChild(el('strong', { textContent: analysis.threat_summary || '' }));
+        body.appendChild(document.createTextNode(' '));
+
+        // Add details
+        const details = [];
+        if (analysis.cape_assessment) details.push(analysis.cape_assessment);
+        if (analysis.wind_assessment) details.push(analysis.wind_assessment);
+        body.appendChild(document.createTextNode(details.join(' ')));
+        wrap.appendChild(body);
+
+        // Threats tags
+        if (analysis.primary_threats && analysis.primary_threats.length > 0) {
+          const threats = el('div', { className: 'severe-banner-threats' });
+          for (const threat of analysis.primary_threats) {
+            threats.appendChild(el('span', { className: 'severe-threat-tag', textContent: threat }));
+          }
+          // Risk indicators
+          if (analysis.tornado_risk && analysis.tornado_risk !== 'none') {
+            const tag = el('span', { className: 'severe-threat-tag', textContent: 'Tornado: ' + analysis.tornado_risk });
+            tag.style.cssText = 'background:rgba(255,0,255,0.1);color:#ff00ff;border-color:rgba(255,0,255,0.2);';
+            threats.appendChild(tag);
+          }
+          if (analysis.hail_risk && analysis.hail_risk !== 'none') {
+            threats.appendChild(el('span', { className: 'severe-threat-tag', textContent: 'Hail: ' + analysis.hail_risk }));
+          }
+          wrap.appendChild(threats);
+        }
+
+        // Timing
+        if (analysis.peak_danger_window || analysis.timing) {
+          const timing = el('div', { className: 'severe-banner-timing' },
+            el('span', { textContent: '\u23F0' }),
+            el('strong', { textContent: 'Peak Danger: ' }),
+            document.createTextNode(analysis.peak_danger_window || analysis.timing)
+          );
+          wrap.appendChild(timing);
+        }
+
+        // Safety actions
+        if (analysis.safety_actions && analysis.safety_actions.length > 0) {
+          const safety = el('div', { style: 'margin-top:12px;font-size:12px;color:var(--text-dim);' });
+          safety.appendChild(el('strong', { textContent: 'Safety: ', style: 'color:var(--text);' }));
+          safety.appendChild(document.createTextNode(analysis.safety_actions.join(' \u2022 ')));
+          wrap.appendChild(safety);
+        }
+      }
+
+      // NWS alerts
+      if (alerts && alerts.length > 0) {
+        for (const alert of alerts) {
+          const alertEl = el('div', { style: 'margin-top:12px;padding:12px;background:rgba(239,68,68,0.1);border-radius:8px;border:1px solid rgba(239,68,68,0.3);' },
+            el('strong', { textContent: alert.event + ': ', style: 'color:var(--red);' }),
+            document.createTextNode(alert.headline || '')
+          );
+          wrap.appendChild(alertEl);
+        }
+      }
+
+      banner.appendChild(wrap);
+    }
+
+    function renderCapeChart(severe) {
+      const container = document.getElementById('capeSection');
+      container.replaceChildren();
+
+      const section = el('div', { className: 'cape-section' });
+
+      // Header
+      const capeBg = severe.maxCape >= 2500 ? 'rgba(239,68,68,0.15)' : severe.maxCape >= 1500 ? 'rgba(245,158,11,0.15)' : 'rgba(34,197,94,0.15)';
+      const capeColor = severe.maxCape >= 2500 ? 'var(--red)' : severe.maxCape >= 1500 ? 'var(--amber)' : 'var(--green)';
+      const header = el('div', { className: 'cape-header' },
+        el('div', { className: 'cape-title', textContent: 'Convective Energy (CAPE) — Tomorrow' })
+      );
+      const val = el('span', { className: 'cape-value', textContent: 'Peak: ' + severe.maxCape + ' J/kg' });
+      val.style.cssText = 'background:' + capeBg + ';color:' + capeColor + ';';
+      header.appendChild(val);
+      section.appendChild(header);
+
+      // Canvas
+      const canvas = document.createElement('canvas');
+      canvas.className = 'cape-canvas';
+      canvas.width = 800;
+      canvas.height = 100;
+      section.appendChild(canvas);
+
+      // Draw CAPE profile
+      const ctx = canvas.getContext('2d');
+      const profile = severe.capeProfile || [];
+      if (profile.length > 0) {
+        const maxVal = Math.max(...profile, 1000); // at least 1000 scale
+        const w = canvas.width;
+        const h = canvas.height;
+        const step = w / (profile.length - 1);
+
+        // Danger zones background
+        ctx.fillStyle = 'rgba(239, 68, 68, 0.05)';
+        const dangerY = h - (2500 / maxVal) * h;
+        if (dangerY > 0) ctx.fillRect(0, 0, w, dangerY < h ? h - dangerY : 0);
+
+        // Threshold lines
+        [1000, 2000, 3000].forEach(threshold => {
+          if (threshold <= maxVal) {
+            const y = h - (threshold / maxVal) * h;
+            ctx.strokeStyle = threshold >= 2500 ? 'rgba(239,68,68,0.2)' : 'rgba(255,255,255,0.08)';
+            ctx.lineWidth = 1;
+            ctx.setLineDash([4, 4]);
+            ctx.beginPath();
+            ctx.moveTo(0, y);
+            ctx.lineTo(w, y);
+            ctx.stroke();
+            ctx.setLineDash([]);
+
+            // Label
+            ctx.fillStyle = 'rgba(255,255,255,0.3)';
+            ctx.font = '10px Inter, sans-serif';
+            ctx.fillText(threshold + ' J/kg', 4, y - 3);
+          }
+        });
+
+        // CAPE fill
+        const gradient = ctx.createLinearGradient(0, 0, 0, h);
+        gradient.addColorStop(0, 'rgba(239, 68, 68, 0.4)');
+        gradient.addColorStop(0.5, 'rgba(245, 158, 11, 0.3)');
+        gradient.addColorStop(1, 'rgba(34, 197, 94, 0.1)');
+
+        ctx.beginPath();
+        ctx.moveTo(0, h);
+        for (let i = 0; i < profile.length; i++) {
+          const x = i * step;
+          const y = h - (profile[i] / maxVal) * (h - 10);
+          if (i === 0) ctx.lineTo(x, y);
+          else ctx.lineTo(x, y);
+        }
+        ctx.lineTo(w, h);
+        ctx.closePath();
+        ctx.fillStyle = gradient;
+        ctx.fill();
+
+        // CAPE line
+        ctx.beginPath();
+        for (let i = 0; i < profile.length; i++) {
+          const x = i * step;
+          const y = h - (profile[i] / maxVal) * (h - 10);
+          if (i === 0) ctx.moveTo(x, y);
+          else ctx.lineTo(x, y);
+        }
+        ctx.strokeStyle = severe.maxCape >= 2500 ? '#ef4444' : severe.maxCape >= 1500 ? '#f59e0b' : '#22c55e';
+        ctx.lineWidth = 2;
+        ctx.stroke();
+
+        // Gust overlay
+        if (severe.gustProfile) {
+          const maxGust = Math.max(...severe.gustProfile, 30);
+          ctx.beginPath();
+          for (let i = 0; i < severe.gustProfile.length; i++) {
+            const x = i * (w / (severe.gustProfile.length - 1));
+            const y = h - (severe.gustProfile[i] / maxGust) * (h - 10);
+            if (i === 0) ctx.moveTo(x, y);
+            else ctx.lineTo(x, y);
+          }
+          ctx.strokeStyle = 'rgba(56, 189, 248, 0.5)';
+          ctx.lineWidth = 1.5;
+          ctx.setLineDash([3, 3]);
+          ctx.stroke();
+          ctx.setLineDash([]);
+        }
+
+        // Time labels
+        ctx.fillStyle = 'rgba(255,255,255,0.3)';
+        ctx.font = '10px Inter, sans-serif';
+        for (let i = 0; i < 24; i += 6) {
+          const x = (i / 23) * w;
+          const label = i === 0 ? '12am' : i === 6 ? '6am' : i === 12 ? '12pm' : '6pm';
+          ctx.fillText(label, x + 2, h - 3);
+        }
+
+        // Peak marker
+        const peakIdx = profile.indexOf(severe.maxCape);
+        if (peakIdx >= 0) {
+          const px = peakIdx * step;
+          const py = h - (severe.maxCape / maxVal) * (h - 10);
+          ctx.beginPath();
+          ctx.arc(px, py, 5, 0, Math.PI * 2);
+          ctx.fillStyle = severe.maxCape >= 2500 ? '#ef4444' : '#f59e0b';
+          ctx.fill();
+          ctx.strokeStyle = '#fff';
+          ctx.lineWidth = 1.5;
+          ctx.stroke();
+        }
+      }
+
+      // Legend
+      const legend = el('div', { className: 'cape-legend' },
+        el('span', { textContent: '\u2501 CAPE (J/kg)' }),
+        el('span', { textContent: '--- Wind Gusts (mph)' }),
+        el('span', { textContent: 'Peak: ' + severe.peakCapeTime?.split('T')[1] || '' })
+      );
+      section.appendChild(legend);
+      container.appendChild(section);
+    }
+
+    // Reputation panel
+    async function loadReputation() {
+      try {
+        const res = await fetch('/api/reputation');
+        const data = await res.json();
+        if (!data.ok || !data.leaderboard || data.leaderboard.length === 0) return;
+
+        const panel = document.getElementById('reputationPanel');
+        const title = document.getElementById('reputationTitle');
+        panel.style.display = 'block';
+        title.style.display = 'flex';
+        panel.replaceChildren();
+
+        const wrap = el('div', { className: 'reputation-panel' });
+        const scoreBtn = el('button', { className: 'btn-sm', textContent: 'Score Yesterday' });
+        scoreBtn.addEventListener('click', async () => {
+          scoreBtn.disabled = true;
+          scoreBtn.textContent = 'Scoring...';
+          const result = await autoScoreReputation();
+          scoreBtn.textContent = result ? 'Scored!' : 'No data';
+          setTimeout(() => { scoreBtn.textContent = 'Score Yesterday'; scoreBtn.disabled = false; }, 2000);
+        });
+        const header = el('div', { className: 'rep-header' },
+          el('div', { className: 'rep-title', textContent: 'Agent Leaderboard' }),
+          scoreBtn
+        );
+        wrap.appendChild(header);
+
+        const grid = el('div', { className: 'rep-grid' });
+
+        data.leaderboard.forEach((agent, i) => {
+          const card = el('div', { className: 'rep-card' });
+          card.style.borderLeftColor = i === 0 ? '#ffd700' : i === 1 ? '#c0c0c0' : i === 2 ? '#cd7f32' : 'var(--border)';
+
+          const rankClass = i === 0 ? ' gold' : i === 1 ? ' silver' : i === 2 ? ' bronze' : '';
+          const cardHeader = el('div', { className: 'rep-card-header' },
+            el('span', { className: 'rep-rank' + rankClass, textContent: '#' + (i + 1) }),
+            el('span', { className: 'rep-agent-name', textContent: agent.emoji + ' ' + agent.name }),
+            el('span', { className: 'rep-weight', textContent: agent.weight + 'x' })
+          );
+          card.appendChild(cardHeader);
+
+          const stats = el('div', { className: 'rep-stats' },
+            el('span', {},
+              document.createTextNode('Score: '),
+              el('span', { className: 'rep-stat-value', textContent: agent.recentAvg + '/100' })
+            ),
+            el('span', {},
+              document.createTextNode('Forecasts: '),
+              el('span', { className: 'rep-stat-value', textContent: String(agent.totalForecasts) })
+            )
+          );
+          if (agent.streak > 0) {
+            stats.appendChild(el('span', { className: 'rep-streak', textContent: agent.streak + ' streak' }));
+          }
+          card.appendChild(stats);
+
+          if (agent.badges && agent.badges.length > 0) {
+            const badges = el('div', { className: 'rep-badges' });
+            for (const b of agent.badges) {
+              badges.appendChild(el('span', { className: 'rep-badge', textContent: b.icon + ' ' + b.label }));
+            }
+            card.appendChild(badges);
+          }
+
+          grid.appendChild(card);
+        });
+
+        wrap.appendChild(grid);
+        panel.appendChild(wrap);
+      } catch (e) {
+        // Silently fail
+      }
+    }
+
+    // Morning brief
+    async function loadBrief() {
+      try {
+        const locId = selectedLocation?.id || 'mt-sterling';
+        const res = await fetch('/api/brief?location=' + locId);
+        const data = await res.json();
+        if (!data.ok || !data.brief) return;
+
+        const panel = document.getElementById('briefPanel');
+        panel.style.display = 'block';
+        panel.replaceChildren();
+
+        const wrap = el('div', { className: 'brief-panel' });
+
+        const header = el('div', { className: 'brief-header' },
+          el('div', { className: 'brief-title', textContent: 'Morning Brief — ' + data.location }),
+          el('button', { className: 'brief-btn', textContent: 'Refresh' })
+        );
+        header.querySelector('.brief-btn').addEventListener('click', loadBrief);
+        wrap.appendChild(header);
+
+        // Split brief into paragraphs
+        const paragraphs = data.brief.split('\n\n').filter(p => p.trim());
+        const textWrap = el('div', { className: 'brief-text' });
+        for (const para of paragraphs) {
+          textWrap.appendChild(el('p', { textContent: para.trim() }));
+        }
+        wrap.appendChild(textWrap);
+
+        wrap.appendChild(el('div', { className: 'brief-timestamp', textContent: 'Generated ' + new Date(data.timestamp).toLocaleTimeString() }));
+        panel.appendChild(wrap);
+      } catch (e) {
+        // Silently fail
+      }
+    }
+
+    // Forecast all locations
+    async function forecastAllLocations() {
+      const btn = document.getElementById('allLocBtn');
+      btn.disabled = true;
+      btn.textContent = 'Running...';
+
+      try {
+        const res = await fetch('/api/forecast/all');
+        const data = await res.json();
+        if (data.ok) {
+          let msg = 'Forecasts complete for ' + data.date + ':\n\n';
+          for (const r of data.results) {
+            if (r.ok && r.forecast?.consensus?.consensus) {
+              const c = r.forecast.consensus.consensus;
+              msg += r.location.name + ': ' + c.high_temp + 'F/' + c.low_temp + 'F ' + c.condition + ' (Severe: ' + c.severe_risk + ')\n';
+            } else {
+              msg += r.location.name + ': ERROR\n';
+            }
+          }
+          btn.textContent = data.results.length + ' done!';
+          setTimeout(() => { btn.textContent = 'All Locations'; btn.disabled = false; }, 3000);
+          // Reload the current view
+          loadWeatherForLocation();
+        }
+      } catch (e) {
+        btn.textContent = 'Error';
+        setTimeout(() => { btn.textContent = 'All Locations'; btn.disabled = false; }, 2000);
+      }
+    }
+
+    // Schedule panel
+    async function loadSchedule() {
+      try {
+        const res = await fetch('/api/schedule');
+        const data = await res.json();
+        if (!data.ok) return;
+
+        const panel = document.getElementById('schedulePanel');
+        panel.replaceChildren();
+
+        const wrap = el('div', { className: 'schedule-panel' });
+        wrap.appendChild(el('div', { className: 'schedule-label', textContent: 'Auto-Forecast' }));
+
+        const toggle = el('div', { className: 'schedule-toggle' + (data.enabled ? ' active' : '') });
+        toggle.addEventListener('click', async () => {
+          const newState = !toggle.classList.contains('active');
+          const hrs = parseInt(document.getElementById('scheduleInterval')?.value) || 6;
+          const locs = Array.from(document.getElementById('scheduleLocs')?.selectedOptions || []).map(o => o.value);
+          await fetch('/api/schedule', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ enabled: newState, intervalHours: hrs, locations: locs.length ? locs : ['mt-sterling'] })
+          });
+          toggle.classList.toggle('active');
+          statusEl.textContent = newState ? 'Running every ' + hrs + 'h' : 'Stopped';
+        });
+        wrap.appendChild(toggle);
+
+        const interval = el('select', { className: 'schedule-select', id: 'scheduleInterval' });
+        [1, 3, 6, 12, 24].forEach(h => {
+          const opt = el('option', { value: String(h), textContent: 'Every ' + h + 'h' });
+          if (h === data.intervalHours) opt.selected = true;
+          interval.appendChild(opt);
+        });
+        wrap.appendChild(interval);
+
+        const statusEl = el('div', { className: 'schedule-status', textContent: data.enabled ? 'Running every ' + data.intervalHours + 'h' : 'Stopped' });
+        wrap.appendChild(statusEl);
+
+        panel.appendChild(wrap);
+      } catch (e) { /* ignore */ }
+    }
+
+    // Preload agent weights for cards
+    fetch('/api/reputation').then(r => r.json()).then(d => {
+      if (d.ok && d.weights) agentWeightsCache = d.weights;
+    }).catch(() => {});
+
+    // Keyboard shortcuts
+    document.addEventListener('keydown', (e) => {
+      // Don't trigger if typing in an input
+      if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT') return;
+
+      if (e.key === 'r' || e.key === 'R') {
+        e.preventDefault();
+        if (!document.getElementById('forecastBtn').disabled) runForecast();
+      } else if (e.key === 'b' || e.key === 'B') {
+        e.preventDefault();
+        loadBrief();
+      } else if (e.key === '1') {
+        setMode('quick');
+      } else if (e.key === '2') {
+        setMode('stream');
+      } else if (e.key === '3') {
+        setMode('full');
+      }
+    });
+
+    // 3-day severe outlook strip
+    async function loadSevereOutlook() {
+      try {
+        const locId = selectedLocation?.id || 'mt-sterling';
+        const res = await fetch('/api/severe?location=' + locId);
+        const data = await res.json();
+        if (!data.ok || !data.days || data.days.length === 0) return;
+
+        const container = document.getElementById('severeOutlook');
+
+        // Only show if any day has non-none severity
+        const hasAnySevere = data.days.some(d => d.severity?.level !== 'none');
+        if (!hasAnySevere && !data.days.some(d => d.maxCape > 500)) return;
+
+        container.style.display = 'block';
+        container.replaceChildren();
+
+        const titleEl = el('div', { className: 'section-title', textContent: '3-Day Severe Outlook' });
+        container.appendChild(titleEl);
+
+        const strip = el('div', { className: 'severe-outlook' });
+        const dayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
+        for (const day of data.days) {
+          const d = new Date(day.date + 'T12:00:00');
+          const sev = day.severity?.level || 'none';
+          const card = el('div', { className: 'severe-day sev-' + sev });
+
+          card.appendChild(el('div', {
+            className: 'severe-day-date',
+            textContent: dayNames[d.getDay()] + ' ' + (d.getMonth() + 1) + '/' + d.getDate()
+          }));
+
+          const capeEl = el('div', { className: 'severe-day-cape' });
+          capeEl.appendChild(document.createTextNode(String(day.maxCape)));
+          capeEl.appendChild(el('span', { className: 'severe-day-cape-unit', textContent: ' J/kg' }));
+          card.appendChild(capeEl);
+
+          if (sev !== 'none') {
+            const label = el('span', { className: 'severe-day-label', textContent: day.severity.label });
+            label.style.cssText = 'background:' + day.severity.color + '22;color:' + day.severity.color + ';';
+            card.appendChild(label);
+          } else {
+            card.appendChild(el('span', { className: 'severe-day-label', textContent: 'Clear', style: 'background:rgba(34,197,94,0.1);color:var(--green);' }));
+          }
+
+          card.appendChild(el('div', {
+            className: 'severe-day-gusts',
+            textContent: 'Gusts: ' + day.maxGusts + ' mph | T-storms: ' + day.thunderstormHours + 'h'
+          }));
+
+          // Mini CAPE profile sparkline
+          if (day.capeProfile && day.capeProfile.length > 0) {
+            const mini = el('div', { className: 'severe-day-mini' });
+            const maxC = Math.max(...day.capeProfile, 500);
+            for (let i = 0; i < day.capeProfile.length; i += 2) {
+              const val = day.capeProfile[i];
+              const h = Math.max(1, (val / maxC) * 28);
+              const bar = el('div', { className: 'severe-day-bar' });
+              bar.style.height = h + 'px';
+              bar.style.background = val >= 2500 ? 'var(--red)' : val >= 1500 ? 'var(--amber)' : val >= 500 ? '#22c55e' : 'var(--border)';
+              mini.appendChild(bar);
+            }
+            card.appendChild(mini);
+          }
+
+          strip.appendChild(card);
+        }
+
+        container.appendChild(strip);
+      } catch (e) { /* ignore */ }
+    }
+
+    // Auto-score reputation (fetch yesterday's actuals)
+    async function autoScoreReputation() {
+      try {
+        const res = await fetch('/api/outcome/auto', { method: 'POST' });
+        const data = await res.json();
+        if (data.ok) {
+          loadReputation(); // refresh the panel
+          return data;
+        }
+      } catch (e) { /* ignore */ }
+      return null;
+    }
+
+    init();
+    // Load supplementary data in background
+    loadLocations();
+    loadSevereWeather();
+    loadSevereOutlook();
+    loadReputation();
+    loadSchedule();
+    loadBrief();
+    loadLocalForecasts();
+    loadAccuracy();
+    autoScoreReputation(); // auto-score past forecasts on page load
+
+    // Update uptime display periodically
+    async function updateUptime() {
+      try {
+        const res = await fetch('/api/status');
+        const data = await res.json();
+        if (data.ok) {
+          const secs = data.uptime;
+          const h = Math.floor(secs / 3600);
+          const m = Math.floor((secs % 3600) / 60);
+          document.getElementById('statusUptime').textContent =
+            'Up ' + (h > 0 ? h + 'h ' : '') + m + 'm | ' + data.memory.heapUsed;
+        }
+      } catch { /* ignore */ }
+    }
+    updateUptime();
+    setInterval(updateUptime, 60000); // update every minute
+  </script>
+</body>
+</html>

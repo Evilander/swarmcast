@@ -1,0 +1,6 @@
+node_modules/
+.env
+*.log
+data/forecasts/
+data/outcomes/
+data/reputation.json

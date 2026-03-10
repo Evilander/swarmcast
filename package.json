@@ -1,0 +1,14 @@
+{
+  "name": "swarmcast",
+  "version": "0.2.0",
+  "type": "module",
+  "description": "Multi-agent weather prediction swarm with consensus visualization",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node --watch src/server.js"
+  },
+  "dependencies": {
+    "express": "^4.21.0"
+  }
+}
