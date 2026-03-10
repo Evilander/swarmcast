@@ -3,6 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
   <title>SwarmCast — Multi-Agent Weather Prediction</title>
   <style>
     :root {
@@ -453,7 +454,8 @@
     }
 
     .day-card:hover { border-color: var(--accent); transform: translateY(-2px); }
-    .day-card.today { border-color: var(--accent); background: var(--surface-2); }
+    .day-card.is-selected { border-color: var(--accent); background: var(--surface-2); }
+    .day-card.is-today:not(.is-selected) { box-shadow: inset 0 0 0 1px rgba(56, 189, 248, 0.18); }
 
     .day-name { font-size: 11px; color: var(--text-dim); text-transform: uppercase; letter-spacing: 1px; margin-bottom: 4px; }
     .day-date { font-size: 10px; color: var(--text-dim); margin-bottom: 8px; }
@@ -806,8 +808,10 @@
     .severe-day {
       background: var(--surface); border: 1px solid var(--border);
       border-radius: var(--radius); padding: 16px; text-align: center;
-      transition: all 0.3s; position: relative; overflow: hidden;
+      transition: all 0.3s; position: relative; overflow: hidden; cursor: pointer;
     }
+    .severe-day:hover { border-color: var(--accent); transform: translateY(-2px); }
+    .severe-day.is-active { border-color: var(--accent); box-shadow: 0 0 0 1px rgba(56, 189, 248, 0.22); }
     .severe-day::before {
       content: ''; position: absolute; top: 0; left: 0; right: 0; height: 3px;
     }
@@ -1238,6 +1242,72 @@
     let forecastMode = 'stream';
     let selectedLocation = null;
     let agentWeightsCache = {};
+    let selectedTargetDate = '';
+    let forecastStripDays = [];
+
+    function localDateStr(date = new Date()) {
+      return [
+        date.getFullYear(),
+        String(date.getMonth() + 1).padStart(2, '0'),
+        String(date.getDate()).padStart(2, '0')
+      ].join('-');
+    }
+
+    function addDays(date, days) {
+      const next = new Date(date);
+      next.setDate(next.getDate() + days);
+      return next;
+    }
+
+    function getDefaultTargetDate(days = forecastStripDays) {
+      if (!days || days.length === 0) return '';
+      const tomorrow = localDateStr(addDays(new Date(), 1));
+      return days.find((day) => day.date === tomorrow)?.date || days[0].date;
+    }
+
+    function getTargetDateLabel(date) {
+      if (!date) return 'Selected Day';
+      const today = localDateStr(new Date());
+      const tomorrow = localDateStr(addDays(new Date(), 1));
+      if (date === today) return 'Today';
+      if (date === tomorrow) return 'Tomorrow';
+      const [year, month, day] = date.split('-').map((value) => Number.parseInt(value, 10));
+      return new Date(year, month - 1, day).toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' });
+    }
+
+    function setSelectedTargetDate(date) {
+      if (!date) return;
+      selectedTargetDate = date;
+      updateForecastStripSelection();
+    }
+
+    function updateForecastStripSelection() {
+      const today = localDateStr(new Date());
+      document.querySelectorAll('#forecastStrip .day-card').forEach((card) => {
+        const cardDate = card.getAttribute('data-date');
+        card.classList.toggle('is-selected', cardDate === selectedTargetDate);
+        card.classList.toggle('is-today', cardDate === today);
+      });
+    }
+
+    function getForecastRequestUrl(basePath, extraParams = {}) {
+      const params = new URLSearchParams();
+      if (selectedLocation) {
+        params.set('lat', selectedLocation.lat);
+        params.set('lon', selectedLocation.lon);
+        params.set('location', selectedLocation.name);
+      }
+      if (selectedTargetDate) {
+        params.set('date', selectedTargetDate);
+      }
+      Object.entries(extraParams).forEach(([key, value]) => {
+        if (value != null && value !== '') {
+          params.set(key, value);
+        }
+      });
+      const query = params.toString();
+      return query ? `${basePath}?${query}` : basePath;
+    }
 
     function setMode(mode) {
       forecastMode = mode;
@@ -1387,18 +1457,23 @@
 
       const strip = document.getElementById('forecastStrip');
       const title = document.getElementById('forecastStripTitle');
+      forecastStripDays = futureDays.slice(0, 7);
+      if (!forecastStripDays.some((day) => day.date === selectedTargetDate)) {
+        selectedTargetDate = getDefaultTargetDate(forecastStripDays);
+      }
       strip.style.display = 'grid';
       title.style.display = 'flex';
       strip.replaceChildren();
 
       const dayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-      const today = new Date().toISOString().split('T')[0];
+      const today = localDateStr(new Date());
+      const tomorrow = localDateStr(addDays(new Date(), 1));
 
-      for (const day of futureDays.slice(0, 7)) {
+      for (const day of forecastStripDays) {
         const d = new Date(day.date + 'T12:00:00');
-        const isToday = day.date === today;
-        const card = el('div', { className: 'day-card' + (isToday ? ' today' : '') },
-          el('div', { className: 'day-name', textContent: dayNames[d.getDay()] }),
+        const label = day.date === today ? 'Today' : day.date === tomorrow ? 'Tomorrow' : dayNames[d.getDay()];
+        const card = el('div', { className: 'day-card', 'data-date': day.date },
+          el('div', { className: 'day-name', textContent: label }),
           el('div', { className: 'day-date', textContent: (d.getMonth() + 1) + '/' + d.getDate() }),
           el('div', { className: 'day-condition', textContent: getConditionEmoji(day.condition) }),
           el('div', { className: 'day-temps' },
@@ -1409,19 +1484,17 @@
           el('div', { className: 'day-precip', textContent: day.precipProb > 0 ? day.precipProb + '% precip' : '' })
         );
 
-        // Click to run swarm for that day
         card.addEventListener('click', () => {
-          const dateInput = day.date;
-          const currentEndpoint = forecastMode === 'stream'
-            ? '/api/forecast/stream?date=' + dateInput
-            : (forecastMode === 'quick' ? '/api/forecast/quick?date=' + dateInput : '/api/forecast?date=' + dateInput);
-          // For now, just highlight
-          strip.querySelectorAll('.day-card').forEach(c => c.classList.remove('today'));
-          card.classList.add('today');
+          setSelectedTargetDate(day.date);
+          void loadSevereWeather();
+          void loadSevereOutlook();
+          void runForecast();
         });
 
         strip.appendChild(card);
       }
+
+      updateForecastStripSelection();
     }
 
     function drawSparkline(hourlyData) {
@@ -1544,12 +1617,17 @@
         config = await res.json();
         const adminSuffix = config.adminProtected ? ' \u2022 admin-protected' : '';
         document.getElementById('statusProvider').textContent = config.provider + ' \u2022 ' + config.agentCount + ' agents' + adminSuffix;
+        if (!config.adminProtected) {
+          void autoScoreReputation();
+        }
         const wxRes = await fetch('/api/weather');
         const wx = await wxRes.json();
         if (wx.ok) {
           renderConditions(wx.summary);
           drawSparkline(wx.summary.next24h);
           renderForecastStrip(wx.summary.futureDays);
+          void loadSevereWeather();
+          void loadSevereOutlook();
         }
 
         // Load latest forecast from history if available
@@ -1559,7 +1637,7 @@
           const latest = hist.forecasts[0];
           renderForecast({ ...latest, ok: true });
           document.getElementById('statusTime').textContent =
-            'Last run: ' + new Date(latest.timestamp).toLocaleTimeString();
+            'Last run: ' + new Date(latest.timestamp).toLocaleTimeString() + ' for ' + getTargetDateLabel(latest.targetDate);
         }
       } catch (e) {
         document.getElementById('statusProvider').textContent = 'Connection error';
@@ -1635,8 +1713,7 @@
 
       try {
         const endpoint = forecastMode === 'quick' ? '/api/forecast/quick' : '/api/forecast';
-        const locParams = selectedLocation ? '?lat=' + selectedLocation.lat + '&lon=' + selectedLocation.lon + '&location=' + encodeURIComponent(selectedLocation.name) : '';
-        const res = await fetch(endpoint + locParams);
+        const res = await fetch(getForecastRequestUrl(endpoint));
         const data = await res.json();
         clearInterval(agentInterval);
         overlay.classList.add('hidden');
@@ -1644,7 +1721,7 @@
         if (data.ok) {
           renderForecast(data);
           document.getElementById('statusTime').textContent =
-            'Last run: ' + new Date(data.timestamp).toLocaleTimeString() + ' \u2022 ' + data.meta.totalElapsed + 's';
+            'Last run: ' + new Date(data.timestamp).toLocaleTimeString() + ' for ' + getTargetDateLabel(data.targetDate) + ' \u2022 ' + data.meta.totalElapsed + 's';
         } else {
           alert('Forecast error: ' + data.error);
         }
@@ -1678,8 +1755,7 @@
       let debateResponses = [];
       let agentIndex = 0;
 
-      const locParams = selectedLocation ? 'lat=' + selectedLocation.lat + '&lon=' + selectedLocation.lon + '&location=' + encodeURIComponent(selectedLocation.name) + '&' : '';
-      const source = new EventSource('/api/forecast/stream?' + locParams + 'debate=true');
+      const source = new EventSource(getForecastRequestUrl('/api/forecast/stream', { debate: 'true' }));
 
       source.addEventListener('status', (e) => {
         const data = JSON.parse(e.data);
@@ -1760,7 +1836,7 @@
         const data = JSON.parse(e.data);
         const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
         document.getElementById('statusTime').textContent =
-          'Last run: ' + new Date(data.timestamp).toLocaleTimeString() + ' \u2022 ' + elapsed + 's (streamed)';
+          'Last run: ' + new Date(data.timestamp).toLocaleTimeString() + ' for ' + getTargetDateLabel(data.targetDate) + ' \u2022 ' + elapsed + 's (streamed)';
 
         // Remove status if still present
         if (grid.contains(statusEl)) grid.removeChild(statusEl);
@@ -2347,6 +2423,8 @@
           renderConditions(data.summary);
           drawSparkline(data.summary.next24h);
           renderForecastStrip(data.summary.futureDays);
+          void loadSevereWeather();
+          void loadSevereOutlook();
         }
       } catch (e) { /* ignore */ }
     }
@@ -2355,32 +2433,56 @@
     async function loadSevereWeather() {
       try {
         const locId = selectedLocation?.id || 'mt-sterling';
-        const res = await fetch('/api/severe?location=' + locId);
+        const params = new URLSearchParams({ location: locId });
+        if (selectedTargetDate) {
+          params.set('date', selectedTargetDate);
+        }
+        const res = await fetch('/api/severe?' + params.toString());
         const data = await res.json();
         if (!data.ok) return;
 
         const banner = document.getElementById('severeBanner');
         const capeContainer = document.getElementById('capeSection');
-
-        // Tomorrow's severe data
-        const tmrw = data.tomorrow;
-        if (!tmrw) return;
-
-        // Update global threat level
-        updateThreatLevel(tmrw);
-
-        // Show CAPE chart if we have data
-        if (tmrw.capeProfile && tmrw.maxCape > 500) {
-          renderCapeChart(tmrw);
-          capeContainer.style.display = 'block';
+        const selected = data.selected || data.today || data.tomorrow;
+        if (!selected) {
+          updateThreatLevel(null);
+          banner.style.display = 'none';
+          capeContainer.style.display = 'none';
+          return;
         }
 
-        // Show severe banner if threat level is anything other than none
-        if (tmrw.severity.level !== 'none') {
-          // Get detailed analysis
-          const analysisRes = await fetch('/api/severe/analysis?location=' + locId);
-          const analysisData = await analysisRes.json();
-          renderSevereBanner(tmrw, analysisData.analysis, analysisData.alerts);
+        if (!selectedTargetDate) {
+          selectedTargetDate = data.selectedDate || selected.date;
+          updateForecastStripSelection();
+        }
+
+        updateThreatLevel(selected);
+
+        if (selected.capeProfile && selected.maxCape > 500) {
+          renderCapeChart(selected, data.selectedLabel || getTargetDateLabel(selected.date));
+          capeContainer.style.display = 'block';
+        } else {
+          capeContainer.style.display = 'none';
+        }
+
+        if (selected.severity.level !== 'none') {
+          let analysisData = { analysis: null, alerts: data.alerts || [], dateLabel: data.selectedLabel };
+          try {
+            const analysisParams = new URLSearchParams({ location: locId, date: selected.date });
+            const analysisRes = await fetch('/api/severe/analysis?' + analysisParams.toString());
+            const nextAnalysisData = await analysisRes.json();
+            if (nextAnalysisData?.ok) {
+              analysisData = nextAnalysisData;
+            }
+          } catch (analysisError) {
+            void analysisError;
+          }
+          renderSevereBanner(
+            selected,
+            analysisData.analysis,
+            analysisData.alerts,
+            analysisData.dateLabel || data.selectedLabel || getTargetDateLabel(selected.date)
+          );
         } else {
           banner.style.display = 'none';
         }
@@ -2389,7 +2491,7 @@
       }
     }
 
-    function renderSevereBanner(severe, analysis, alerts) {
+    function renderSevereBanner(severe, analysis, alerts, dateLabel) {
       const banner = document.getElementById('severeBanner');
       banner.style.display = 'block';
       banner.replaceChildren();
@@ -2402,7 +2504,7 @@
       // Header
       const header = el('div', { className: 'severe-banner-header' },
         el('span', { className: 'severe-banner-icon', textContent: severe.severity.level === 'extreme' ? '\u26A0\uFE0F' : '\u26A1' }),
-        el('span', { className: 'severe-banner-title', textContent: 'Severe Weather Outlook — Tomorrow' })
+        el('span', { className: 'severe-banner-title', textContent: 'Severe Weather Outlook - ' + dateLabel })
       );
       const levelBadge = el('span', { className: 'severe-banner-level', textContent: severe.severity.label });
       levelBadge.style.cssText = 'background:' + severe.severity.color + '22;color:' + severe.severity.color + ';border:1px solid ' + severe.severity.color + '44;';
@@ -2473,7 +2575,7 @@
       banner.appendChild(wrap);
     }
 
-    function renderCapeChart(severe) {
+    function renderCapeChart(severe, dateLabel) {
       const container = document.getElementById('capeSection');
       container.replaceChildren();
 
@@ -2483,7 +2585,7 @@
       const capeBg = severe.maxCape >= 2500 ? 'rgba(239,68,68,0.15)' : severe.maxCape >= 1500 ? 'rgba(245,158,11,0.15)' : 'rgba(34,197,94,0.15)';
       const capeColor = severe.maxCape >= 2500 ? 'var(--red)' : severe.maxCape >= 1500 ? 'var(--amber)' : 'var(--green)';
       const header = el('div', { className: 'cape-header' },
-        el('div', { className: 'cape-title', textContent: 'Convective Energy (CAPE) — Tomorrow' })
+        el('div', { className: 'cape-title', textContent: 'Convective Energy (CAPE) - ' + dateLabel })
       );
       const val = el('span', { className: 'cape-value', textContent: 'Peak: ' + severe.maxCape + ' J/kg' });
       val.style.cssText = 'background:' + capeBg + ';color:' + capeColor + ';';
@@ -2737,7 +2839,11 @@
       btn.textContent = 'Running...';
 
       try {
-        const res = await fetch('/api/forecast/all');
+        const params = new URLSearchParams();
+        if (selectedTargetDate) {
+          params.set('date', selectedTargetDate);
+        }
+        const res = await fetch('/api/forecast/all' + (params.toString() ? '?' + params.toString() : ''));
         const data = await res.json();
         if (data.ok) {
           let msg = 'Forecasts complete for ' + data.date + ':\n\n';
@@ -2840,15 +2946,27 @@
     async function loadSevereOutlook() {
       try {
         const locId = selectedLocation?.id || 'mt-sterling';
-        const res = await fetch('/api/severe?location=' + locId);
+        const params = new URLSearchParams({ location: locId });
+        if (selectedTargetDate) {
+          params.set('date', selectedTargetDate);
+        }
+        const res = await fetch('/api/severe?' + params.toString());
         const data = await res.json();
         if (!data.ok || !data.days || data.days.length === 0) return;
 
         const container = document.getElementById('severeOutlook');
+        if (!selectedTargetDate) {
+          selectedTargetDate = data.selectedDate || data.days[0].date;
+          updateForecastStripSelection();
+        }
 
         // Only show if any day has non-none severity
         const hasAnySevere = data.days.some(d => d.severity?.level !== 'none');
-        if (!hasAnySevere && !data.days.some(d => d.maxCape > 500)) return;
+        if (!hasAnySevere && !data.days.some(d => d.maxCape > 500)) {
+          container.style.display = 'none';
+          container.replaceChildren();
+          return;
+        }
 
         container.style.display = 'block';
         container.replaceChildren();
@@ -2857,16 +2975,17 @@
         container.appendChild(titleEl);
 
         const strip = el('div', { className: 'severe-outlook' });
-        const dayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
         for (const day of data.days) {
-          const d = new Date(day.date + 'T12:00:00');
           const sev = day.severity?.level || 'none';
-          const card = el('div', { className: 'severe-day sev-' + sev });
+          const card = el('div', {
+            className: 'severe-day sev-' + sev + (day.date === selectedTargetDate ? ' is-active' : ''),
+            'data-date': day.date
+          });
 
           card.appendChild(el('div', {
             className: 'severe-day-date',
-            textContent: dayNames[d.getDay()] + ' ' + (d.getMonth() + 1) + '/' + d.getDate()
+            textContent: getTargetDateLabel(day.date)
           }));
 
           const capeEl = el('div', { className: 'severe-day-cape' });
@@ -2902,6 +3021,12 @@
             card.appendChild(mini);
           }
 
+          card.addEventListener('click', () => {
+            setSelectedTargetDate(day.date);
+            void loadSevereWeather();
+            void loadSevereOutlook();
+          });
+
           strip.appendChild(card);
         }
 
@@ -2935,9 +3060,6 @@
     loadBrief();
     loadLocalForecasts();
     loadAccuracy();
-    if (!config?.adminProtected) {
-      autoScoreReputation(); // auto-score past forecasts on page load
-    }
 
     // Tab switching (right panel)
     document.querySelector('.tab-list')?.addEventListener('click', (e) => {
@@ -2992,8 +3114,9 @@
           const secs = data.uptime;
           const h = Math.floor(secs / 3600);
           const m = Math.floor((secs % 3600) / 60);
+          const heapUsed = data.memory?.heapUsedMb != null ? data.memory.heapUsedMb + ' MB heap' : 'memory unavailable';
           document.getElementById('statusUptime').textContent =
-            'Up ' + (h > 0 ? h + 'h ' : '') + m + 'm | ' + data.memory.heapUsed;
+            'Up ' + (h > 0 ? h + 'h ' : '') + m + 'm | ' + heapUsed;
         }
       } catch { /* ignore */ }
     }

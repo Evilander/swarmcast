@@ -171,6 +171,24 @@ test('unknown location falls back to default', async () => {
   assert.equal(body.location, 'Mt. Sterling, IL');
 });
 
+test('severe route supports selecting today explicitly', async () => {
+  const res = await fetch(`http://127.0.0.1:${port}/api/severe?day=today`);
+  assert.equal(res.status, 200);
+  const body = await res.json();
+  assert.equal(body.ok, true);
+  assert.equal(body.selectedDay, 'today');
+  assert.equal(body.selectedLabel, 'Today');
+  assert.equal(body.selectedDate, localDateStr(new Date()));
+});
+
+test('severe route rejects unsupported day values', async () => {
+  const res = await fetch(`http://127.0.0.1:${port}/api/severe?day=weekend`);
+  assert.equal(res.status, 400);
+  const body = await res.json();
+  assert.equal(body.ok, false);
+  assert.match(body.error, /today or tomorrow/i);
+});
+
 test('outcome without actual body returns 400', async () => {
   const res = await fetch(`http://127.0.0.1:${port}/api/outcome`, {
     method: 'POST',
@@ -300,4 +318,12 @@ async function fetchJson(pathname) {
   const response = await fetch(`http://127.0.0.1:${port}${pathname}`);
   assert.equal(response.ok, true, `Expected ${pathname} to succeed.`);
   return response.json();
+}
+
+function localDateStr(date) {
+  return [
+    date.getFullYear(),
+    String(date.getMonth() + 1).padStart(2, '0'),
+    String(date.getDate()).padStart(2, '0')
+  ].join('-');
 }

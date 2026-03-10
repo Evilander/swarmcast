@@ -1,229 +1,150 @@
 # SwarmCast
 
-**Multi-agent weather prediction powered by AI ensemble forecasting.**
+SwarmCast is a production-oriented weather service that blends standard forecast data, severe-weather signals, and multi-agent LLM reasoning into a single dashboard and API.
 
-5 specialist AI agents independently analyze weather data, debate each other's predictions, and converge on a confidence-weighted consensus forecast. Each agent has a distinct personality and forecasting philosophy — from the data-driven Statistician to the anomaly-hunting Contrarian.
+Five specialist agents review the same weather context, argue from different forecasting styles, and produce a consensus forecast with confidence, disagreement, and watch items. The app also tracks outcomes over time so agent weights can adapt based on real performance.
 
-![SwarmCast Dashboard](screenshot-5agent.png)
+![SwarmCast dashboard](screenshot-5agent.png)
 
-## What makes this different
+## Highlights
 
-- **Agent diversity by design** — Each agent approaches the same data from a different angle. The Statistician trusts historical averages. The Contrarian hunts for what everyone else is missing. The Pattern Hunter tracks momentum. The Sentinel watches for severe weather. The Local factors in regional microclimate effects.
-- **Live debate** — After initial predictions, agents see each other's forecasts and can revise their positions, challenge disagreements, or strengthen agreements.
-- **Reputation system** — Agents are scored against actual outcomes. Over time, more accurate agents earn higher weights in the consensus. Badges and streaks reward consistency.
-- **Severe weather intelligence** — Integrates CAPE (Convective Available Potential Energy) profiles, NWS alerts, and convective parameters. 3-day severe outlook with hour-by-hour instability charts.
-- **Morning brief** — A conversational, locally-flavored weather narrative you'd enjoy reading with coffee.
-- **Real-time streaming** — SSE-powered live stream shows agents appearing as they complete analysis.
+- Multi-agent consensus forecasting with quick, full, and live-stream modes
+- Date-selectable forecasts from the 7-day strip instead of a hard-coded next-day-only flow
+- Date-selectable severe outlook and severe analysis for today or upcoming forecast days
+- Readiness and status endpoints for deployment health checks
+- Admin-key protection for mutating routes
+- File-backed persistence with atomic writes
+- Docker-ready single-service deployment
+- Zero build step and minimal runtime dependencies
 
-## Quick start
+## Quick Start
 
 ```bash
-git clone https://github.com/evilander/swarmcast.git
+git clone https://github.com/Evilander/swarmcast.git
 cd swarmcast
 npm ci
 cp .env.example .env
-# Add the provider key for LLM_PROVIDER before starting.
+# Set the API key for your chosen provider in .env
 npm run start:prod
-# Open http://localhost:3777
 ```
 
-PowerShell equivalent:
+PowerShell:
 
 ```powershell
 Copy-Item .env.example .env
+npm ci
+npm run start:prod
 ```
 
-Run the smoke test suite:
-
-```bash
-npm test
-```
+Open `http://localhost:3777`.
 
 ## Configuration
 
-Copy `.env.example` to `.env` and set at least one LLM provider key:
+SwarmCast requires Node 20+ and at least one configured LLM provider key when `REQUIRE_LLM_KEY=true`.
+
+Core settings:
 
 ```env
-# Pick one (or more) provider
 OPENAI_API_KEY=sk-...
 ANTHROPIC_API_KEY=sk-ant-...
 GEMINI_API_KEY=AI...
 
-# Which provider to use
 LLM_PROVIDER=openai
 REQUIRE_LLM_KEY=true
 
-# Location (defaults to Mt. Sterling, IL)
-LATITUDE=39.9870
-LONGITUDE=-90.7601
-LOCATION_NAME=Mt. Sterling, IL
-
-# Server hardening
 NODE_ENV=production
 HOST=0.0.0.0
 PORT=3777
-TRUST_PROXY=false
-JSON_BODY_LIMIT=256kb
-REQUEST_TIMEOUT_MS=30000
-KEEP_ALIVE_TIMEOUT_MS=5000
-HEADERS_TIMEOUT_MS=60000
-SHUTDOWN_TIMEOUT_MS=15000
-EXTERNAL_TIMEOUT_MS=15000
-EXTERNAL_RETRIES=1
-EXTERNAL_RETRY_BACKOFF_MS=400
-STREAM_HEARTBEAT_MS=15000
-RATE_LIMIT_WINDOW_MS=60000
-EXPENSIVE_ROUTE_LIMIT=6
-ADMIN_ROUTE_LIMIT=30
-ALLOWED_ORIGIN=
 DATA_DIR=./data
-
-# Optional admin protection for mutating routes
-ADMIN_API_KEY=change-me
+ALLOWED_ORIGIN=
+ADMIN_API_KEY=
 ```
 
-Supports **OpenAI**, **Anthropic Claude**, and **Google Gemini** as LLM backends. Switch between them by changing `LLM_PROVIDER`.
+Useful production knobs:
+
+- `TRUST_PROXY`
+- `REQUEST_TIMEOUT_MS`
+- `KEEP_ALIVE_TIMEOUT_MS`
+- `HEADERS_TIMEOUT_MS`
+- `SHUTDOWN_TIMEOUT_MS`
+- `EXTERNAL_TIMEOUT_MS`
+- `EXTERNAL_RETRIES`
+- `STREAM_HEARTBEAT_MS`
+- `RATE_LIMIT_WINDOW_MS`
+- `EXPENSIVE_ROUTE_LIMIT`
+- `ADMIN_ROUTE_LIMIT`
 
 ## Production Notes
 
-- `NODE_ENV=production` and `REQUIRE_LLM_KEY=true` make the service fail fast if the configured provider key is missing.
-- Mutating routes (`/api/schedule`, `/api/outcome`, `/api/outcome/auto`, `/api/reputation/score`) require the `x-swarmcast-admin-key` header when `ADMIN_API_KEY` is set.
-- Expensive LLM-backed routes are rate-limited in-process by default.
-- Set `ALLOWED_ORIGIN` if you host the dashboard or widget on a different origin and want browser access to the API.
-- `DATA_DIR` lets you relocate runtime state outside the repo checkout for container or VM deployments.
-- `/api/status` is the operational status snapshot and `/api/ready` is the readiness probe.
+- `/api/status` reports runtime health, storage state, scheduler state, memory usage, and warnings.
+- `/api/ready` is the deploy readiness probe.
+- Mutating routes require the `x-swarmcast-admin-key` header when `ADMIN_API_KEY` is set.
+- Expensive LLM-backed routes are rate-limited in-process.
+- Runtime data is stored under `DATA_DIR`, so state can live outside the repo checkout.
+- This service is designed as a single-instance file-backed deployment, not a multi-writer cluster.
 
-Run in Docker:
+## Docker
 
 ```bash
 docker build -t swarmcast .
 docker run --rm -p 3777:3777 --env-file .env swarmcast
 ```
 
-## The 5 Agents
+The container image includes a healthcheck against `/api/ready`.
 
-| Agent | Role | Strength | Weakness |
-|-------|------|----------|----------|
-| **The Statistician** | Historical averages & regression to mean | Precise baselines, stable predictions | Can miss rapid-onset changes |
-| **The Contrarian** | Anomaly hunting & challenging consensus | Catches surprises others miss | Can over-rotate on edge cases |
-| **The Pattern Hunter** | Trend analysis & momentum tracking | Identifies multi-day sequences | Can see trends that don't exist |
-| **The Sentinel** | Severe weather & safety-critical events | Early warning system | Can be overly cautious |
-| **The Local** | Regional microclimate & terrain effects | River valley, agricultural impacts | Can over-emphasize local effects |
+## Forecast and Severe Date Selection
 
-## Features
+The dashboard now supports choosing the forecast date directly from the 7-day strip. Severe-weather detail follows the selected date instead of always locking to tomorrow.
 
-### Dashboard
-- Current conditions with dew point and pressure indicators
-- 24-hour temperature/precip/wind sparkline
-- 7-day forecast strip with click-to-forecast
-- Agent cards with predictions, reasoning, dissent, and wild cards
-- Temperature comparison visualization across agents
-- Consensus panel with agreement meter and narrative
-- Agent debate panel with revisions and challenges
+API examples:
 
-### Severe Weather
-- 3-day severe outlook strip with CAPE profiles
-- Hour-by-hour CAPE chart with threshold lines and gust overlay
-- Automated NWS alert integration
-- LLM-powered threat analysis (tornado, hail, flood risk assessment)
-- Pulsing alert banner with severity-based styling
+```bash
+curl "http://localhost:3777/api/forecast?date=2026-03-10"
+curl "http://localhost:3777/api/forecast/stream?date=2026-03-11"
+curl "http://localhost:3777/api/severe?location=mt-sterling&day=today"
+curl "http://localhost:3777/api/severe/analysis?location=mt-sterling&date=2026-03-11"
+```
 
-### Agent Reputation
-- Composite scoring against actual outcomes
-- Dynamic consensus weighting (0.5x–2.0x)
-- Badges: Elite, Reliable, Hot Streak, Veteran, Heavy Hitter
-- Leaderboard with auto-scoring on page load
+## API Surface
 
-### Multi-Location
-- 4 pre-configured locations (Mt. Sterling, Quincy, Chicago, Springfield)
-- Location switcher reloads all panels
-- Parallel all-locations forecasting
+| Endpoint | Method | Purpose |
+| --- | --- | --- |
+| `/api/weather` | `GET` | Current conditions and forecast data |
+| `/api/forecast` | `GET` | Full swarm forecast |
+| `/api/forecast/quick` | `GET` | Fast swarm forecast |
+| `/api/forecast/stream` | `GET` | SSE live swarm forecast |
+| `/api/forecast/all` | `GET` | Forecast all configured locations |
+| `/api/forecast/multiday` | `GET` | Generate multiple future swarm forecasts |
+| `/api/severe` | `GET` | Severe outlook, alerts, and selected-day detail |
+| `/api/severe/analysis` | `GET` | LLM severe-risk analysis for the selected day |
+| `/api/brief` | `GET` | Morning weather brief |
+| `/api/local` | `GET` | Local/NWS source comparison |
+| `/api/reputation` | `GET` | Agent leaderboard and weights |
+| `/api/reputation/score` | `POST` | Score forecasts against actuals |
+| `/api/outcome` | `POST` | Record actual observed weather |
+| `/api/outcome/auto` | `POST` | Auto-record yesterday's weather |
+| `/api/accuracy` | `GET` | Accuracy summary |
+| `/api/history` | `GET` | Stored forecast history |
+| `/api/schedule` | `GET/POST` | Scheduler configuration |
+| `/api/status` | `GET` | Operational status |
+| `/api/ready` | `GET` | Readiness probe |
 
-### Morning Brief
-- Natural-language weather narrative
-- Includes severe weather context and swarm dissent
-- Locally-flavored (references regional landmarks)
+## Local Verification
 
-### Scheduling & History
-- Auto-forecast on configurable intervals (1–24h)
-- Forecast history with date browsing
-- Auto-outcome recording and reputation scoring
-- Accuracy tracking with grade distribution
+```bash
+npm test
+```
 
-## API Endpoints
-
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/api/weather` | GET | Current conditions and 7-day forecast |
-| `/api/forecast` | GET | Full swarm forecast with debate |
-| `/api/forecast/quick` | GET | Fast forecast without debate |
-| `/api/forecast/stream` | GET | SSE live stream of agent analysis |
-| `/api/forecast/all` | GET | Parallel forecast all locations |
-| `/api/forecast/multiday` | GET | 3–5 day swarm forecast |
-| `/api/brief` | GET | Morning weather brief |
-| `/api/severe` | GET | 3-day severe outlook + NWS alerts |
-| `/api/severe/analysis` | GET | LLM-powered threat analysis |
-| `/api/reputation` | GET | Agent leaderboard and weights |
-| `/api/reputation/score` | POST | Score agents against actuals |
-| `/api/outcome/auto` | POST | Auto-record yesterday's weather |
-| `/api/accuracy` | GET | Forecast accuracy report |
-| `/api/local` | GET | NWS and local station forecasts |
-| `/api/schedule` | GET/POST | Manage auto-forecast schedule |
-| `/api/locations` | GET | Available locations |
-| `/api/history` | GET | Past forecasts |
-| `/api/export/:format` | GET | Export as text or JSON |
-| `/api/status` | GET | Runtime status with uptime, memory, storage, and scheduler state |
-| `/api/ready` | GET | Readiness probe for deploy health checks |
-
-## Keyboard Shortcuts
-
-| Key | Action |
-|-----|--------|
-| `R` | Run forecast |
-| `B` | Refresh morning brief |
-| `1` | Quick mode |
-| `2` | Live stream mode |
-| `3` | Full + debate mode |
+The smoke suite validates the hardened server surface, including status/readiness, admin route protection, CORS handling, validation failures, security headers, and rate limiting.
 
 ## Architecture
 
+```text
+public/   dashboard and embeddable widget
+src/      server, providers, swarm orchestration, storage, reputation, accuracy
+test/     node:test smoke coverage
+data/     runtime forecast, outcome, and scheduler state
 ```
-swarmcast/
-├── public/
-│   └── index.html          # Single-page dashboard (no build step)
-├── src/
-│   ├── server.js           # Express server + all API routes
-│   ├── agents.js           # Agent definitions + prompt builders
-│   ├── swarm.js            # Orchestrator — runs agents, builds consensus
-│   ├── stream.js           # SSE streaming endpoint
-│   ├── debate.js           # Agent debate round
-│   ├── llm.js              # LLM provider abstraction (OpenAI/Anthropic/Gemini)
-│   ├── weather.js          # Open-Meteo + NWS data fetching
-│   ├── local-forecasts.js  # NWS station forecasts
-│   ├── locations.js        # Multi-location definitions
-│   ├── reputation.js       # Agent scoring + weight system
-│   ├── accuracy.js         # Forecast vs actual comparison
-│   └── storage.js          # JSON file persistence
-├── data/                   # Forecast history + outcomes (gitignored)
-├── .env.example
-└── package.json
-```
-
-**Zero build step.** One dependency (`express`). ES modules throughout. No framework, no bundler, no TypeScript — just JavaScript that runs.
-
-## Weather Data Sources
-
-- **[Open-Meteo](https://open-meteo.com/)** — Free weather API. Current conditions, hourly forecasts, CAPE/CIN convective parameters. No API key needed.
-- **[NWS API](https://api.weather.gov/)** — Official National Weather Service forecasts and active alerts. No API key needed.
-
-## How consensus works
-
-1. Each agent receives the same weather data (current conditions, 3-day history, 7-day forecast, hourly data, severe parameters)
-2. Agents independently produce predictions with confidence levels and reasoning
-3. The Consensus Engine weights predictions by agent confidence AND reputation weight
-4. Points of convergence and divergence are identified
-5. A blended forecast is produced with narrative summary
-6. In debate mode, agents see each other's predictions and can revise
 
 ## License
 

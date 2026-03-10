@@ -405,17 +405,24 @@ Guidelines:
 
   app.get('/api/severe', handleAsync(async (req, res) => {
     const location = getLocationFromQuery(req.query.location || LOCATIONS[0]?.id);
+    const selection = resolveDateSelection(req.query, { defaultDay: 'tomorrow' });
     const [days, alerts] = await Promise.all([
       getSevereParams(location.lat, location.lon),
       getNWSAlerts(location.lat, location.lon)
     ]);
     const tomorrow = getTomorrowDate();
+    const today = localDateStr(new Date());
     res.json({
       ok: true,
       location: location.name,
       alerts,
       days: days || [],
+      today: findDayByDate(days, today),
       tomorrow: days?.find((day) => day.date === tomorrow) || null,
+      selected: findDayByDate(days, selection.date),
+      selectedDate: selection.date,
+      selectedDay: selection.day,
+      selectedLabel: selection.label,
       hasActiveAlerts: alerts.length > 0,
       timestamp: new Date().toISOString()
     });
@@ -423,6 +430,7 @@ Guidelines:
 
   app.get('/api/severe/analysis', handleAsync(async (req, res) => {
     const location = getLocationFromQuery(req.query.location || LOCATIONS[0]?.id);
+    const selection = resolveDateSelection(req.query, { defaultDay: 'tomorrow' });
     const [days, alerts, rawWeather] = await Promise.all([
       getSevereParams(location.lat, location.lon),
       getNWSAlerts(location.lat, location.lon),
@@ -430,21 +438,20 @@ Guidelines:
     ]);
 
     const summary = summarizeWeatherData(rawWeather);
-    const tomorrow = getTomorrowDate();
-    const severeTomorrow = days?.find((day) => day.date === tomorrow);
-    const forecastTomorrow = summary.futureDays.find((day) => day.date === tomorrow);
+    const severeDay = findDayByDate(days, selection.date);
+    const forecastDay = summary.futureDays.find((day) => day.date === selection.date);
 
-    const analysisPrompt = `You are a severe weather analyst for western Illinois. Analyze these conditions for ${location.name} on ${tomorrow} and provide a detailed severe weather threat assessment.
+    const analysisPrompt = `You are a severe weather analyst for western Illinois. Analyze these conditions for ${location.name} on ${selection.date} and provide a detailed severe weather threat assessment.
 
 CONVECTIVE PARAMETERS:
-- Max CAPE: ${severeTomorrow?.maxCape || 0} J/kg (peak at ${severeTomorrow?.peakCapeTime || 'unknown'})
-- Average CAPE: ${severeTomorrow?.avgCape || 0} J/kg
-- Max Wind Gusts: ${severeTomorrow?.maxGusts || 0} mph
-- Max Sustained Wind: ${severeTomorrow?.maxWind || 0} mph
-- Max Precip Probability: ${severeTomorrow?.maxPrecipProb || 0}%
-- Thunderstorm Hours (code >= 95): ${severeTomorrow?.thunderstormHours || 0}
-- Storm Hours (code >= 80): ${severeTomorrow?.stormHours || 0}
-- Severity Assessment: ${severeTomorrow?.severity?.label || 'N/A'}
+- Max CAPE: ${severeDay?.maxCape || 0} J/kg (peak at ${severeDay?.peakCapeTime || 'unknown'})
+- Average CAPE: ${severeDay?.avgCape || 0} J/kg
+- Max Wind Gusts: ${severeDay?.maxGusts || 0} mph
+- Max Sustained Wind: ${severeDay?.maxWind || 0} mph
+- Max Precip Probability: ${severeDay?.maxPrecipProb || 0}%
+- Thunderstorm Hours (code >= 95): ${severeDay?.thunderstormHours || 0}
+- Storm Hours (code >= 80): ${severeDay?.stormHours || 0}
+- Severity Assessment: ${severeDay?.severity?.label || 'N/A'}
 
 SURFACE CONDITIONS:
 - Current Temp: ${summary.current.temp}F
@@ -453,11 +460,11 @@ SURFACE CONDITIONS:
 - Pressure: ${summary.current.pressure} hPa
 
 FORECAST:
-- High: ${forecastTomorrow?.high || '?'}F / Low: ${forecastTomorrow?.low || '?'}F
-- Condition: ${forecastTomorrow?.condition || 'unknown'}
-- Precip Prob: ${forecastTomorrow?.precipProb || 0}%
-- Wind Max: ${forecastTomorrow?.windMax || 0} mph
-- Gust Max: ${forecastTomorrow?.gustMax || 0} mph
+- High: ${forecastDay?.high || '?'}F / Low: ${forecastDay?.low || '?'}F
+- Condition: ${forecastDay?.condition || 'unknown'}
+- Precip Prob: ${forecastDay?.precipProb || 0}%
+- Wind Max: ${forecastDay?.windMax || 0} mph
+- Gust Max: ${forecastDay?.gustMax || 0} mph
 
 ACTIVE NWS ALERTS: ${alerts.length > 0 ? alerts.map((alert) => `${alert.event}: ${alert.headline}`).join('; ') : 'None'}
 
@@ -481,8 +488,10 @@ Respond with JSON:
     res.json({
       ok: true,
       location: location.name,
-      date: tomorrow,
-      convective: severeTomorrow,
+      date: selection.date,
+      day: selection.day,
+      dateLabel: selection.label,
+      convective: severeDay,
       alerts,
       analysis,
       timestamp: new Date().toISOString()
@@ -785,6 +794,30 @@ function getRequestedDate(value, defaultValue, options = {}) {
   return date;
 }
 
+function resolveDateSelection(query, { defaultDay = 'tomorrow' } = {}) {
+  const explicitDate = cleanString(query?.date);
+  if (explicitDate) {
+    const date = getRequestedDate(explicitDate, null, { required: true });
+    return {
+      date,
+      day: getRelativeDateKey(date),
+      label: getRelativeDateLabel(date)
+    };
+  }
+
+  const day = cleanString(query?.day) || defaultDay;
+  if (!['today', 'tomorrow'].includes(day)) {
+    throw new HttpError(400, 'day must be either today or tomorrow.');
+  }
+
+  const date = day === 'today' ? localDateStr(new Date()) : getTomorrowDate();
+  return {
+    date,
+    day,
+    label: day === 'today' ? 'Today' : 'Tomorrow'
+  };
+}
+
 function getBooleanQuery(value, defaultValue = false) {
   if (value == null || value === '') {
     return defaultValue;
@@ -900,6 +933,36 @@ function loadInitialScheduleConfig() {
       locations: [LOCATIONS[0]?.id || 'mt-sterling']
     };
   }
+}
+
+function findDayByDate(days, targetDate) {
+  return days?.find((day) => day.date === targetDate) || null;
+}
+
+function getRelativeDateKey(date) {
+  if (date === localDateStr(new Date())) {
+    return 'today';
+  }
+  if (date === getTomorrowDate()) {
+    return 'tomorrow';
+  }
+  return null;
+}
+
+function getRelativeDateLabel(date) {
+  const relative = getRelativeDateKey(date);
+  if (relative === 'today') {
+    return 'Today';
+  }
+  if (relative === 'tomorrow') {
+    return 'Tomorrow';
+  }
+
+  const [year, month, day] = date.split('-').map((value) => Number.parseInt(value, 10));
+  return new Date(year, month - 1, day).toLocaleDateString('en-US', {
+    month: 'short',
+    day: 'numeric'
+  });
 }
 
 function restartScheduler({ runNow = false } = {}) {

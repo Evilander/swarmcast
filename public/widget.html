@@ -3,6 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
   <title>SwarmCast Widget</title>
   <style>
     :root {
@@ -349,18 +350,21 @@
         if (severeRes && severeRes.ok) {
           var banner = document.getElementById('severeBanner');
           var alerts = severeRes.alerts || [];
-          var tomorrow = severeRes.tomorrow;
+          var focusDay = severeRes.today || severeRes.selected || severeRes.tomorrow;
+          var focusLabel = focusDay && focusDay.date === severeRes.selectedDate
+            ? (severeRes.selectedLabel || 'Today')
+            : (focusDay && severeRes.today && focusDay.date === severeRes.today.date ? 'Today' : 'Tomorrow');
 
           if (alerts.length > 0) {
             setText('severeText', alerts[0].event + ': ' + (alerts[0].headline || '').slice(0, 80));
             banner.querySelector('.severe-icon').textContent = '\u26A0';
             banner.classList.add('active');
             document.body.classList.add('threat-severe');
-          } else if (tomorrow && tomorrow.maxCape >= 1500) {
-            setText('severeText', 'CAPE ' + tomorrow.maxCape + ' J/kg \u2014 ' + (tomorrow.severity && tomorrow.severity.label || 'Elevated'));
+          } else if (focusDay && focusDay.maxCape >= 1500) {
+            setText('severeText', focusLabel + ': CAPE ' + focusDay.maxCape + ' J/kg \u2014 ' + (focusDay.severity && focusDay.severity.label || 'Elevated'));
             banner.querySelector('.severe-icon').textContent = '\u26A0';
             banner.classList.add('active');
-            if (tomorrow.maxCape >= 2500) {
+            if (focusDay.maxCape >= 2500) {
               document.body.classList.add('threat-severe');
             } else {
               document.body.classList.add('threat-elevated');
