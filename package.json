@@ -3,6 +3,15 @@
   "version": "0.3.0",
   "type": "module",
   "description": "Multi-agent weather prediction swarm with consensus visualization",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Evilander/swarmcast.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Evilander/swarmcast/issues"
+  },
+  "homepage": "https://github.com/Evilander/swarmcast#readme",
   "main": "src/server.js",
   "scripts": {
     "start": "node src/server.js",

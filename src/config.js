@@ -1,15 +1,17 @@
 import { existsSync, readFileSync } from 'fs';
 import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';
+import { getDefaultLocation } from './locations.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const APP_ROOT = join(__dirname, '..');
 const ENV_PATH = join(APP_ROOT, '.env');
 const SUPPORTED_PROVIDERS = ['openai', 'anthropic', 'gemini'];
+const fallbackLocation = getDefaultLocation();
 const DEFAULT_LOCATION = Object.freeze({
-  latitude: 41.8781,
-  longitude: -87.6298,
-  name: 'Chicago, IL'
+  latitude: Number(fallbackLocation.lat),
+  longitude: Number(fallbackLocation.lon),
+  name: fallbackLocation.name
 });
 
 loadEnvFile();

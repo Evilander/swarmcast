@@ -4,3 +4,5 @@ node_modules/
 data/forecasts/
 data/outcomes/
 data/reputation.json
+data/schedule.json
+data/*.tmp

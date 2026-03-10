@@ -27,6 +27,12 @@ npm run start:prod
 # Open http://localhost:3777
 ```
 
+PowerShell equivalent:
+
+```powershell
+Copy-Item .env.example .env
+```
+
 Run the smoke test suite:
 
 ```bash
@@ -56,10 +62,21 @@ LOCATION_NAME=Mt. Sterling, IL
 NODE_ENV=production
 HOST=0.0.0.0
 PORT=3777
+TRUST_PROXY=false
 JSON_BODY_LIMIT=256kb
 REQUEST_TIMEOUT_MS=30000
+KEEP_ALIVE_TIMEOUT_MS=5000
+HEADERS_TIMEOUT_MS=60000
+SHUTDOWN_TIMEOUT_MS=15000
 EXTERNAL_TIMEOUT_MS=15000
 EXTERNAL_RETRIES=1
+EXTERNAL_RETRY_BACKOFF_MS=400
+STREAM_HEARTBEAT_MS=15000
+RATE_LIMIT_WINDOW_MS=60000
+EXPENSIVE_ROUTE_LIMIT=6
+ADMIN_ROUTE_LIMIT=30
+ALLOWED_ORIGIN=
+DATA_DIR=./data
 
 # Optional admin protection for mutating routes
 ADMIN_API_KEY=change-me
@@ -72,6 +89,8 @@ Supports **OpenAI**, **Anthropic Claude**, and **Google Gemini** as LLM backends
 - `NODE_ENV=production` and `REQUIRE_LLM_KEY=true` make the service fail fast if the configured provider key is missing.
 - Mutating routes (`/api/schedule`, `/api/outcome`, `/api/outcome/auto`, `/api/reputation/score`) require the `x-swarmcast-admin-key` header when `ADMIN_API_KEY` is set.
 - Expensive LLM-backed routes are rate-limited in-process by default.
+- Set `ALLOWED_ORIGIN` if you host the dashboard or widget on a different origin and want browser access to the API.
+- `DATA_DIR` lets you relocate runtime state outside the repo checkout for container or VM deployments.
 - `/api/status` is the operational status snapshot and `/api/ready` is the readiness probe.
 
 Run in Docker:

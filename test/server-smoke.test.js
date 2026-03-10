@@ -18,6 +18,7 @@ const server = spawn(process.execPath, ['src/server.js'], {
     PORT: String(port),
     DATA_DIR: baseDataDir,
     ADMIN_API_KEY: adminKey,
+    ALLOWED_ORIGIN: 'https://dashboard.example.com',
     REQUIRE_LLM_KEY: 'false',
     EXPENSIVE_ROUTE_LIMIT: '3',
     RATE_LIMIT_WINDOW_MS: '60000'
@@ -70,6 +71,35 @@ test('admin routes require the admin header and persist schedule updates', async
   assert.equal(schedule.intervalHours, 12);
   assert.deepEqual(schedule.locations, ['mt-sterling']);
   assert.equal(schedule.enabled, false);
+});
+
+test('CORS preflight allows the configured origin', async () => {
+  const response = await fetch(`http://127.0.0.1:${port}/api/schedule`, {
+    method: 'OPTIONS',
+    headers: {
+      Origin: 'https://dashboard.example.com',
+      'Access-Control-Request-Method': 'POST',
+      'Access-Control-Request-Headers': 'content-type,x-swarmcast-admin-key'
+    }
+  });
+
+  assert.equal(response.status, 204);
+  assert.equal(response.headers.get('access-control-allow-origin'), 'https://dashboard.example.com');
+  assert.match(response.headers.get('access-control-allow-headers') || '', /x-swarmcast-admin-key/i);
+});
+
+test('CORS preflight rejects disallowed origins', async () => {
+  const response = await fetch(`http://127.0.0.1:${port}/api/schedule`, {
+    method: 'OPTIONS',
+    headers: {
+      Origin: 'https://not-allowed.example.com',
+      'Access-Control-Request-Method': 'POST'
+    }
+  });
+
+  assert.equal(response.status, 403);
+  const body = await response.json();
+  assert.equal(body.code, 'origin_not_allowed');
 });
 
 // --- Request validation tests ---

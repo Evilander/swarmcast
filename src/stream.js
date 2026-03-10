@@ -9,9 +9,9 @@ import { getSevereParams } from './weather.js';
 
 export function setupSSE(app, getWeatherSummary) {
   app.get('/api/forecast/stream', async (req, res) => {
-    const latitude = sanitizeNumber(req.query.lat, process.env.LATITUDE || '41.8781', -90, 90);
-    const longitude = sanitizeNumber(req.query.lon, process.env.LONGITUDE || '-87.6298', -180, 180);
-    const location = sanitizeLocation(req.query.location || process.env.LOCATION_NAME || 'Chicago, IL');
+    const latitude = sanitizeNumber(req.query.lat, config.weather.latitude, -90, 90);
+    const longitude = sanitizeNumber(req.query.lon, config.weather.longitude, -180, 180);
+    const location = sanitizeLocation(req.query.location || config.weather.locationName);
     const date = sanitizeDate(req.query.date || getTomorrowDate());
     const debate = req.query.debate === 'true';
 
@@ -193,7 +193,7 @@ function sanitizeNumber(value, fallback, min, max) {
 
 function sanitizeLocation(value) {
   const location = String(value || '').trim();
-  return location ? location.slice(0, 100) : 'Chicago, IL';
+  return location ? location.slice(0, 100) : config.weather.locationName;
 }
 
 function sanitizeDate(value) {

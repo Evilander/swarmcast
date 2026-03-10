@@ -66,6 +66,7 @@ export function createApp() {
 
   app.use(assignRequestId);
   app.use(applySecurityHeaders);
+  app.use(handleCors);
   app.use(express.json({ limit: config.server.jsonBodyLimit }));
   app.use(express.urlencoded({ extended: false, limit: config.server.jsonBodyLimit }));
   app.use(logRequests);
@@ -635,6 +636,39 @@ function applySecurityHeaders(req, res, next) {
   next();
 }
 
+function handleCors(req, res, next) {
+  const allowedOrigin = config.server.allowedOrigin;
+  const requestOrigin = req.get('origin');
+  if (!allowedOrigin || !requestOrigin) {
+    next();
+    return;
+  }
+
+  res.setHeader('Vary', appendVaryHeader(res.getHeader('Vary'), 'Origin'));
+
+  const originAllowed = allowedOrigin === '*' || requestOrigin === allowedOrigin;
+  if (!originAllowed) {
+    if (req.method === 'OPTIONS') {
+      next(new HttpError(403, 'Origin not allowed.', { code: 'origin_not_allowed' }));
+      return;
+    }
+    next();
+    return;
+  }
+
+  res.setHeader('Access-Control-Allow-Origin', allowedOrigin === '*' ? '*' : requestOrigin);
+  res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', `Content-Type, ${ADMIN_HEADER}`);
+  res.setHeader('Access-Control-Max-Age', '86400');
+
+  if (req.method === 'OPTIONS') {
+    res.status(204).end();
+    return;
+  }
+
+  next();
+}
+
 function logRequests(req, res, next) {
   const start = Date.now();
   res.on('finish', () => {
@@ -642,6 +676,17 @@ function logRequests(req, res, next) {
     console.log(`[${req.id}] ${req.method} ${req.originalUrl} ${res.statusCode} ${durationMs}ms`);
   });
   next();
+}
+
+function appendVaryHeader(existingValue, nextValue) {
+  const values = new Set(
+    String(existingValue || '')
+      .split(',')
+      .map((value) => value.trim())
+      .filter(Boolean)
+  );
+  values.add(nextValue);
+  return [...values].join(', ');
 }
 
 function createRateLimiter({ windowMs, maxRequests, bucket }) {
