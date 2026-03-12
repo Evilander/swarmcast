@@ -7,7 +7,7 @@ export const LOCATIONS = [
     lat: '39.9870',
     lon: '-90.7601',
     timezone: 'America/Chicago',
-    description: 'Home base'
+    description: 'Central Illinois'
   },
   {
     id: 'quincy',
@@ -15,7 +15,7 @@ export const LOCATIONS = [
     lat: '39.9356',
     lon: '-91.4099',
     timezone: 'America/Chicago',
-    description: 'Work'
+    description: 'Mississippi river town'
   },
   {
     id: 'chicago',
